@@ -15,7 +15,12 @@ interface FetchEvent {
   waitUntil: ReturnType<typeof vi.fn>;
 }
 
-function loadFetchHandler(options?: { contentType?: string; cacheError?: boolean }) {
+function loadFetchHandler(options?: {
+  contentType?: string;
+  cacheError?: boolean;
+  fetchError?: boolean;
+  cachedResponse?: Response;
+}) {
   const handlers = new Map<string, (event: FetchEvent) => void>();
   const put = options?.cacheError
     ? vi.fn().mockRejectedValue(new Error('cache unavailable'))
@@ -25,7 +30,10 @@ function loadFetchHandler(options?: { contentType?: string; cacheError?: boolean
     status: 200,
     headers: { 'content-type': options?.contentType ?? 'application/javascript' },
   });
-  const fetch = vi.fn().mockResolvedValue(response);
+  const fetch = options?.fetchError
+    ? vi.fn().mockRejectedValue(new Error('offline'))
+    : vi.fn().mockResolvedValue(response);
+  const match = vi.fn().mockResolvedValue(options?.cachedResponse);
   const source = readFileSync(new URL('../public/pwa-worker.js', import.meta.url), 'utf8');
 
   runInNewContext(source, {
@@ -36,7 +44,7 @@ function loadFetchHandler(options?: { contentType?: string; cacheError?: boolean
     caches: {
       open,
       keys: vi.fn().mockResolvedValue([]),
-      match: vi.fn(),
+      match,
       delete: vi.fn(),
     },
     self: {
@@ -51,7 +59,7 @@ function loadFetchHandler(options?: { contentType?: string; cacheError?: boolean
 
   const handler = handlers.get('fetch');
   if (!handler) throw new Error('fetch handler was not registered');
-  return { handler, fetch, open, put };
+  return { handler, fetch, open, put, match };
 }
 
 function request(path: string, destination = ''): WorkerRequest {
@@ -120,5 +128,19 @@ describe('PWA fetch boundary', () => {
     await (waitUntil.mock.calls[0]?.[0] as Promise<unknown>);
 
     expect(networkResponse.status).toBe(200);
+  });
+
+  it('returns an explicit 503 when offline navigation has no cached shell', async () => {
+    const { handler, match } = loadFetchHandler({ fetchError: true });
+    const respondWith = vi.fn();
+    const waitUntil = vi.fn();
+    const navigation = { ...request('/room/example'), mode: 'navigate' };
+
+    handler({ request: navigation, respondWith, waitUntil });
+    const response = await (respondWith.mock.calls[0]?.[0] as Promise<Response>);
+
+    expect(response.status).toBe(503);
+    expect(await response.text()).toBe('Offline');
+    expect(match).toHaveBeenCalledWith('/index.html');
   });
 });

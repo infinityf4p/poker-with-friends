@@ -3,6 +3,7 @@ import { buildApp } from './app.js';
 import { loadConfig } from './config.js';
 import { PokerRepository } from './repository.js';
 import { RoomManager } from './room/manager.js';
+import { safeErrorLogContext } from './security/logging.js';
 
 const config = loadConfig();
 const { db, client } = createDatabase(config.DATABASE_URL);
@@ -14,7 +15,7 @@ const { app, io } = await buildApp({ config, repository, rooms });
 const maintenance = setInterval(
   () => {
     void Promise.all([repository.cleanupExpiredData(), rooms.archiveIdleRooms()]).catch((error) => {
-      app.log.error({ error }, 'scheduled maintenance failed');
+      app.log.error({ failure: safeErrorLogContext(error) }, 'scheduled maintenance failed');
     });
   },
   60 * 60 * 1_000,

@@ -10,6 +10,9 @@ import type { PokerRepository } from './repository.js';
 import { registerSocketServer } from './realtime/socket.js';
 import { registerHttpRoutes } from './routes/http.js';
 import type { RoomManager } from './room/manager.js';
+import { safeErrorLogContext, safeRequestUrl } from './security/logging.js';
+
+export { safeErrorLogContext, safeRequestUrl } from './security/logging.js';
 
 export interface BuildAppDependencies {
   config: AppConfig;
@@ -22,25 +25,9 @@ export interface PokerApp {
   io: SocketServer;
 }
 
-export function safeErrorLogContext(error: unknown): {
-  errorName: string;
-  errorCode?: string;
-  causeCode?: string;
-} {
-  const record =
-    typeof error === 'object' && error !== null ? (error as Record<string, unknown>) : {};
-  const cause =
-    typeof record.cause === 'object' && record.cause !== null
-      ? (record.cause as Record<string, unknown>)
-      : {};
-  return {
-    errorName: error instanceof Error ? error.name : 'UnknownError',
-    ...(typeof record.code === 'string' ? { errorCode: record.code } : {}),
-    ...(typeof cause.code === 'string' ? { causeCode: cause.code } : {}),
-  };
-}
-
 export async function buildApp(deps: BuildAppDependencies): Promise<PokerApp> {
+  const publicUrl = new URL(deps.config.PUBLIC_ORIGIN);
+  const realtimeOrigin = `${publicUrl.protocol === 'https:' ? 'wss:' : 'ws:'}//${publicUrl.host}`;
   const app = Fastify({
     logger:
       deps.config.NODE_ENV === 'test'
@@ -51,6 +38,8 @@ export async function buildApp(deps: BuildAppDependencies): Promise<PokerApp> {
               paths: [
                 'req.headers.authorization',
                 'req.headers.cookie',
+                'req.headers.referer',
+                'req.url',
                 'res.headers.set-cookie',
                 'err.params',
                 '*.password',
@@ -59,7 +48,8 @@ export async function buildApp(deps: BuildAppDependencies): Promise<PokerApp> {
                 '*.holeCards',
                 '*.turnToken',
               ],
-              censor: '[REDACTED]',
+              censor: (value, path) =>
+                path.join('.') === 'req.url' ? safeRequestUrl(value) : '[REDACTED]',
             },
           },
     trustProxy: deps.config.TRUST_PROXY,
@@ -97,14 +87,32 @@ export async function buildApp(deps: BuildAppDependencies): Promise<PokerApp> {
     reply.header('Referrer-Policy', 'no-referrer');
     reply.header('Permissions-Policy', 'camera=(), microphone=(), geolocation=(), payment=()');
     reply.header('Cross-Origin-Opener-Policy', 'same-origin');
+    reply.header('Cross-Origin-Resource-Policy', 'same-origin');
+    reply.header('X-Frame-Options', 'DENY');
+    if (deps.config.NODE_ENV === 'production') {
+      reply.header('Strict-Transport-Security', 'max-age=31536000');
+    }
     reply.header(
       'Content-Security-Policy',
       "default-src 'self'; script-src 'self'; style-src 'self'; img-src 'self' data:; " +
-        "connect-src 'self' ws: wss:; font-src 'self'; object-src 'none'; frame-ancestors 'none'; " +
+        `connect-src 'self' ${realtimeOrigin}; font-src 'self'; object-src 'none'; frame-ancestors 'none'; ` +
         "base-uri 'self'; form-action 'self'",
     );
     const pathname = request.url.split('?', 1)[0];
-    if (pathname === '/' || pathname?.endsWith('.html')) {
+    const contentType = String(reply.getHeader('content-type') ?? '');
+    if (
+      pathname === '/pwa-worker.js' ||
+      pathname === '/manifest.webmanifest' ||
+      pathname === '/icon.svg'
+    ) {
+      reply.header('Cache-Control', 'no-cache');
+    } else if (pathname?.startsWith('/api/') || pathname?.startsWith('/health/')) {
+      reply.header('Cache-Control', 'no-store');
+    } else if (
+      pathname === '/' ||
+      pathname?.endsWith('.html') ||
+      contentType.toLowerCase().includes('text/html')
+    ) {
       reply.header('Cache-Control', 'no-store');
     }
     return payload;

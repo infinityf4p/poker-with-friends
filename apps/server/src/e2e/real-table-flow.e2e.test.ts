@@ -88,6 +88,7 @@ describeWithDatabase('real HTTP + Socket.IO three-player table flow', () => {
   const admin: HttpSession = { cookie: '' };
   const sockets = new Map<string, Socket>();
   const privateByPlayer = new Map<string, PrivatePlayerProjection>();
+  const createdAccountIds: string[] = [];
   let pokerApp: PokerApp | null = null;
   let database: ReturnType<typeof createDatabase> | null = null;
   let baseUrl = '';
@@ -281,6 +282,7 @@ describeWithDatabase('real HTTP + Socket.IO three-player table flow', () => {
         playerId: '',
         cookie: '',
       });
+      createdAccountIds.push(account.id);
     }
 
     const duplicateAccountResponse = await fetch(`${baseUrl}/api/admin/users`, {
@@ -532,4 +534,49 @@ describeWithDatabase('real HTTP + Socket.IO three-player table flow', () => {
     const skipped = currentRoom().seats.find((seat) => seat.playerId === zeroStackPlayer!.playerId);
     expect(skipped).toMatchObject({ stack: 0, positions: [], hasCards: false });
   }, 60_000);
+
+  it('serializes concurrent joins so a six-player room never overfills', async () => {
+    for (let index = 0; index < 4; index += 1) {
+      const account = await request<AdminUserSummary>(admin, 'POST', '/api/admin/users', {
+        username: `capacity_${runId}_${index + 1}`,
+        displayName: `并发玩家${index + 1}`,
+        password: initialPassword,
+      });
+      createdAccountIds.push(account.id);
+    }
+
+    const room = await request<CreatedRoom>(admin, 'POST', '/api/admin/rooms', {
+      name: `并发容量-${runId}`,
+      settings: {
+        mode: 'LIVE',
+        smallBlind: 10,
+        bigBlind: 20,
+        startingStack: 2_000,
+        stackCap: 2_000,
+        actionTimeoutSeconds: 30,
+        resultDisplaySeconds: 1,
+        nextHandCountdownSeconds: 1,
+        maxPlayers: 6,
+      },
+    });
+
+    const results = await Promise.all(
+      createdAccountIds.map(async (userId, index) => {
+        const response = await fetch(`${baseUrl}/api/admin/rooms/${room.roomId}/players`, {
+          method: 'POST',
+          headers: { cookie: admin.cookie, 'content-type': 'application/json' },
+          body: JSON.stringify({ userId, nickname: `容量玩家${index + 1}` }),
+        });
+        return {
+          status: response.status,
+          body: (await response.json()) as Record<string, unknown>,
+        };
+      }),
+    );
+
+    expect(results.filter((result) => result.status === 201)).toHaveLength(6);
+    expect(results.filter((result) => result.status === 409)).toEqual([
+      expect.objectContaining({ body: { error: 'ROOM_FULL', message: '房间已满' } }),
+    ]);
+  }, 30_000);
 });

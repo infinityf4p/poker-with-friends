@@ -10,6 +10,8 @@ import {
   changeUserPasswordSchema,
   createRoomSchema,
   createUserAccountSchema,
+  identifierSchema,
+  inviteTokenSchema,
   joinRoomSchema,
   resetUserPasswordSchema,
   userLoginSchema,
@@ -18,6 +20,8 @@ import type { AppConfig } from '../config.js';
 import type { AuthenticatedAdmin, AuthenticatedUser, PokerRepository } from '../repository.js';
 import type { RoomManager } from '../room/manager.js';
 import { ADMIN_COOKIE, USER_COOKIE, sessionCookieOptions } from '../security/cookies.js';
+import { safeErrorLogContext } from '../security/logging.js';
+import { isAllowedBrowserOrigin, requiresSameOrigin } from '../security/origin.js';
 
 interface HttpDependencies {
   config: AppConfig;
@@ -39,6 +43,16 @@ export function validationErrorBody(issues: readonly ValidationIssue[]) {
 
 function sendValidationError(reply: FastifyReply, issues: readonly ValidationIssue[]) {
   return reply.code(400).send(validationErrorBody(issues));
+}
+
+export function invalidRouteParameter(params: unknown): string | null {
+  if (!params || typeof params !== 'object') return null;
+  const values = params as Record<string, unknown>;
+  for (const key of ['id', 'playerId']) {
+    if (key in values && !identifierSchema.safeParse(values[key]).success) return key;
+  }
+  if ('token' in values && !inviteTokenSchema.safeParse(values.token).success) return 'token';
+  return null;
 }
 
 async function requireAdmin(
@@ -80,6 +94,23 @@ export async function registerHttpRoutes(
 ): Promise<void> {
   const { config, repository, rooms } = deps;
   const cookieOptions = sessionCookieOptions(config.NODE_ENV === 'production');
+
+  app.addHook('onRequest', async (request, reply) => {
+    if (
+      requiresSameOrigin(request.method) &&
+      !isAllowedBrowserOrigin(request.headers.origin, config.PUBLIC_ORIGIN)
+    ) {
+      return reply
+        .code(403)
+        .send({ error: 'FORBIDDEN', message: '请求来源未获授权，请从本站重新操作' });
+    }
+  });
+
+  app.addHook('preValidation', async (request, reply) => {
+    if (invalidRouteParameter(request.params)) {
+      return reply.code(400).send({ error: 'BAD_REQUEST', message: '路径参数格式无效' });
+    }
+  });
 
   app.get('/health/live', async () => ({ status: 'ok', build: config.APP_BUILD_SHA }));
   app.get('/health/ready', async (_request, reply) => {
@@ -231,7 +262,10 @@ export async function registerHttpRoutes(
       if (error instanceof Error && error.message === 'ROOM_NOT_FOUND') {
         return reply.code(404).send({ error: 'NOT_FOUND', message: '房间不存在' });
       }
-      request.log.error({ error, roomId: request.params.id }, 'admin room snapshot failed');
+      request.log.error(
+        { failure: safeErrorLogContext(error), roomId: request.params.id },
+        'admin room snapshot failed',
+      );
       return reply.code(503).send({ error: 'ROOM_FROZEN', message: '牌局当前无法恢复' });
     }
   });
@@ -357,6 +391,9 @@ export async function registerHttpRoutes(
       if (error instanceof Error && error.message === 'NICKNAME_TAKEN') {
         return reply.code(409).send({ error: 'NICKNAME_TAKEN', message: '昵称已被使用' });
       }
+      if (error instanceof Error && error.message === 'INVALID_NICKNAME') {
+        return reply.code(400).send({ error: 'BAD_REQUEST', message: '昵称格式无效' });
+      }
       if (error instanceof Error && error.message === 'MEMBERSHIP_KICKED') {
         return reply
           .code(409)
@@ -399,6 +436,9 @@ export async function registerHttpRoutes(
         if (error instanceof Error && error.message === 'NICKNAME_TAKEN') {
           return reply.code(409).send({ error: 'NICKNAME_TAKEN', message: '昵称已被使用' });
         }
+        if (error instanceof Error && error.message === 'INVALID_NICKNAME') {
+          return reply.code(400).send({ error: 'BAD_REQUEST', message: '昵称格式无效' });
+        }
         if (error instanceof Error && error.message === 'MEMBERSHIP_KICKED') {
           return reply.code(409).send({ error: 'MEMBERSHIP_KICKED', message: '该身份已被踢出' });
         }
@@ -420,9 +460,20 @@ export async function registerHttpRoutes(
   });
 
   app.post<{ Params: { id: string } }>('/api/admin/rooms/:id/invite', async (request, reply) => {
-    if (!(await requireAdmin(request, reply, repository))) return;
-    const token = await repository.rotateInvite(request.params.id);
-    return { inviteUrl: `${config.PUBLIC_ORIGIN}/join/${token}` };
+    const admin = await requireAdmin(request, reply, repository);
+    if (!admin) return;
+    try {
+      const token = await repository.rotateInvite(request.params.id, admin.id);
+      return { inviteUrl: `${config.PUBLIC_ORIGIN}/join/${token}` };
+    } catch (error) {
+      if (error instanceof Error && error.message === 'ROOM_NOT_FOUND') {
+        return reply.code(404).send({ error: 'NOT_FOUND', message: '房间不存在' });
+      }
+      if (error instanceof Error && error.message === 'ROOM_ARCHIVED') {
+        return reply.code(409).send({ error: 'ROOM_ARCHIVED', message: '已归档房间不能生成邀请' });
+      }
+      throw error;
+    }
   });
 
   app.post<{ Params: { id: string } }>('/api/admin/rooms/:id/archive', async (request, reply) => {
@@ -483,6 +534,9 @@ export async function registerHttpRoutes(
       if (error instanceof Error && error.message === 'NICKNAME_TAKEN') {
         return reply.code(409).send({ error: 'NICKNAME_TAKEN', message: '昵称已被使用' });
       }
+      if (error instanceof Error && error.message === 'INVALID_NICKNAME') {
+        return reply.code(400).send({ error: 'BAD_REQUEST', message: '昵称格式无效' });
+      }
       if (error instanceof Error && error.message === 'MEMBERSHIP_KICKED') {
         return reply.code(409).send({ error: 'MEMBERSHIP_KICKED', message: '你已被该房间踢出' });
       }
@@ -519,7 +573,10 @@ export async function registerHttpRoutes(
     try {
       return await rooms.snapshot(request.params.id, player.id);
     } catch (error) {
-      request.log.error({ error, roomId: request.params.id }, 'room snapshot recovery failed');
+      request.log.error(
+        { failure: safeErrorLogContext(error), roomId: request.params.id },
+        'room snapshot recovery failed',
+      );
       return reply
         .code(503)
         .send({ error: 'ROOM_FROZEN', message: '牌局恢复失败，已冻结等待处理' });
@@ -531,7 +588,10 @@ export async function registerHttpRoutes(
       repository.getUserBySession(request.cookies[USER_COOKIE]),
       repository.getAdminBySession(request.cookies[ADMIN_COOKIE]),
     ]);
-    const player = user ? await repository.getPlayerForUser(user.id, request.params.id) : null;
+    const player =
+      user && !user.mustChangePassword
+        ? await repository.getPlayerForUser(user.id, request.params.id)
+        : null;
     if (!admin && !player) {
       return reply.code(401).send({ error: 'UNAUTHORIZED' });
     }

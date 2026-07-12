@@ -1,13 +1,4 @@
-import {
-  useEffect,
-  useId,
-  useMemo,
-  useRef,
-  useState,
-  type CSSProperties,
-  type FormEvent,
-  type ReactNode,
-} from 'react';
+import { useEffect, useId, useMemo, useRef, useState, type FormEvent, type ReactNode } from 'react';
 import { createPortal } from 'react-dom';
 import type {
   AdminRoomSummary,
@@ -66,6 +57,7 @@ function currentRoute(): Route {
 function navigate(path: string): void {
   window.history.pushState({}, '', path);
   window.dispatchEvent(new PopStateEvent('popstate'));
+  window.scrollTo({ top: 0, left: 0 });
 }
 
 function Brand({ compact = false }: { compact?: boolean }) {
@@ -166,10 +158,14 @@ function HomePage() {
   const loadRooms = async () => setRooms(await api<UserRoomSummary[]>('/api/me/rooms'));
   useEffect(() => {
     api<UserSession>('/api/auth/session')
-      .then(async (user) => {
+      .then((user) => {
         setSession(user);
         setPasswordOpen(user.mustChangePassword);
-        if (!user.mustChangePassword) await loadRooms();
+        if (!user.mustChangePassword) {
+          return loadRooms().catch((caught) =>
+            setError(caught instanceof Error ? caught.message : '无法载入房间列表'),
+          );
+        }
       })
       .catch(() => setSession(null))
       .finally(() => setChecking(false));
@@ -213,9 +209,13 @@ function HomePage() {
           <IconButton
             icon="logout"
             label="退出登录"
-            onClick={() =>
-              void api('/api/auth/logout', { method: 'POST' }).then(() => setSession(null))
-            }
+            onClick={() => {
+              void api('/api/auth/logout', { method: 'POST' })
+                .then(() => setSession(null))
+                .catch((caught) =>
+                  setError(caught instanceof Error ? caught.message : '退出登录失败'),
+                );
+            }}
           />
         </div>
       </header>
@@ -276,8 +276,10 @@ function HomePage() {
           onClose={() => setPasswordOpen(false)}
           onComplete={async (updated) => {
             setSession(updated);
+            await loadRooms().catch((caught) =>
+              setError(caught instanceof Error ? caught.message : '密码已修改，但房间列表载入失败'),
+            );
             setPasswordOpen(false);
-            await loadRooms();
           }}
         />
       )}
@@ -311,7 +313,10 @@ function UserLogin({
         </div>
         <div className="login-heading">
           <span className="eyebrow">PRIVATE TABLES · MEMBERS ONLY</span>
-          <h1>朋友到齐，牌桌就绪。</h1>
+          <h1>
+            <span>朋友到齐，</span>
+            <span>牌桌就绪。</span>
+          </h1>
           <p>登录后进入你的好友桌。线上自动发牌，线下专注收发筹码。</p>
         </div>
         {error && <ErrorBox>{error}</ErrorBox>}
@@ -497,7 +502,10 @@ function AdminPage() {
   const [creatingAccount, setCreatingAccount] = useState(false);
   const [selectedRoom, setSelectedRoom] = useState<AdminRoomSummary | null>(null);
   const [roomPlayers, setRoomPlayers] = useState<AdminRoomPlayerSummary[]>([]);
+  const [roomPlayersLoading, setRoomPlayersLoading] = useState(false);
+  const [roomPlayersError, setRoomPlayersError] = useState<string | null>(null);
   const [latestInvite, setLatestInvite] = useState<{ roomId: string; url: string } | null>(null);
+  const [rotatingRoomId, setRotatingRoomId] = useState<string | null>(null);
 
   const loadRooms = async () => setRooms(await api<AdminRoomSummary[]>('/api/admin/rooms'));
   const loadUsers = async () => setUsers(await api<AdminUserSummary[]>('/api/admin/users'));
@@ -505,9 +513,11 @@ function AdminPage() {
     setRoomPlayers(await api<AdminRoomPlayerSummary[]>(`/api/admin/rooms/${roomId}/players`));
   useEffect(() => {
     api<AdminSession>('/api/admin/session')
-      .then(async (admin) => {
+      .then((admin) => {
         setSession(admin);
-        await Promise.all([loadRooms(), loadUsers()]);
+        return Promise.all([loadRooms(), loadUsers()]).catch((caught) =>
+          setError(caught instanceof Error ? caught.message : '无法载入管理数据'),
+        );
       })
       .catch(() => setSession(null))
       .finally(() => setChecking(false));
@@ -536,14 +546,20 @@ function AdminPage() {
   }
 
   const rotateInvite = async (roomId: string) => {
+    if (rotatingRoomId) return;
+    setRotatingRoomId(roomId);
     try {
       const result = await api<{ inviteUrl: string }>(`/api/admin/rooms/${roomId}/invite`, {
         method: 'POST',
       });
       setLatestInvite({ roomId, url: result.inviteUrl });
-      await navigator.clipboard.writeText(result.inviteUrl).catch(() => undefined);
+      if (navigator.clipboard) {
+        await navigator.clipboard.writeText(result.inviteUrl).catch(() => undefined);
+      }
     } catch (caught) {
       setError(caught instanceof Error ? caught.message : '生成邀请失败');
+    } finally {
+      setRotatingRoomId(null);
     }
   };
 
@@ -569,8 +585,12 @@ function AdminPage() {
         <button
           className="profile-button"
           onClick={async () => {
-            await api('/api/admin/logout', { method: 'POST' });
-            setSession(null);
+            try {
+              await api('/api/admin/logout', { method: 'POST' });
+              setSession(null);
+            } catch (caught) {
+              setError(caught instanceof Error ? caught.message : '退出登录失败');
+            }
           }}
         >
           <span>
@@ -605,10 +625,18 @@ function AdminPage() {
           </button>
         </section>
         <nav className="admin-tabs" aria-label="管理区">
-          <button className={tab === 'rooms' ? 'active' : ''} onClick={() => setTab('rooms')}>
+          <button
+            aria-pressed={tab === 'rooms'}
+            className={tab === 'rooms' ? 'active' : ''}
+            onClick={() => setTab('rooms')}
+          >
             <Icon name="table" size={17} /> 房间 <span>{rooms.length}</span>
           </button>
-          <button className={tab === 'accounts' ? 'active' : ''} onClick={() => setTab('accounts')}>
+          <button
+            aria-pressed={tab === 'accounts'}
+            className={tab === 'accounts' ? 'active' : ''}
+            onClick={() => setTab('accounts')}
+          >
             <Icon name="users" size={17} /> 账号 <span>{users.length}</span>
           </button>
         </nav>
@@ -619,7 +647,19 @@ function AdminPage() {
               <small>新邀请已生成，旧邀请同时失效</small>
               <code>{latestInvite.url}</code>
             </div>
-            <button onClick={() => navigator.clipboard.writeText(latestInvite.url)}>复制</button>
+            <button
+              onClick={() => {
+                if (!navigator.clipboard) {
+                  setError('当前浏览器无法自动复制，请长按或选中邀请链接手动复制');
+                  return;
+                }
+                void navigator.clipboard
+                  .writeText(latestInvite.url)
+                  .catch(() => setError('复制失败，请长按或选中邀请链接手动复制'));
+              }}
+            >
+              复制
+            </button>
           </div>
         )}
         {tab === 'rooms' ? (
@@ -649,16 +689,26 @@ function AdminPage() {
                   </button>
                   <button
                     onClick={() => {
+                      setRoomPlayers([]);
+                      setRoomPlayersError(null);
+                      setRoomPlayersLoading(true);
                       setSelectedRoom(room);
-                      void loadRoomPlayers(room.id).catch((caught) =>
-                        setError(caught instanceof Error ? caught.message : '无法载入玩家'),
-                      );
+                      void loadRoomPlayers(room.id)
+                        .catch((caught) =>
+                          setRoomPlayersError(
+                            caught instanceof Error ? caught.message : '无法载入玩家',
+                          ),
+                        )
+                        .finally(() => setRoomPlayersLoading(false));
                     }}
                   >
                     <Icon name="users" size={15} /> 玩家与筹码
                   </button>
-                  <button onClick={() => void rotateInvite(room.id)}>
-                    <Icon name="copy" size={15} /> 邀请
+                  <button
+                    disabled={rotatingRoomId !== null || room.status === 'ARCHIVED'}
+                    onClick={() => void rotateInvite(room.id)}
+                  >
+                    <Icon name="copy" size={15} /> {rotatingRoomId === room.id ? '生成中…' : '邀请'}
                   </button>
                   {room.status !== 'ARCHIVED' &&
                     room.status !== 'ACTIVE' &&
@@ -694,18 +744,18 @@ function AdminPage() {
         <CreateRoomDialog
           onClose={() => setCreating(false)}
           onCreate={async (body) => {
-            try {
-              const created = await api<CreateRoomResponse>('/api/admin/rooms', {
-                method: 'POST',
-                body: JSON.stringify(body),
-              });
-              setLatestInvite({ roomId: created.roomId, url: created.inviteUrl });
+            const created = await api<CreateRoomResponse>('/api/admin/rooms', {
+              method: 'POST',
+              body: JSON.stringify(body),
+            });
+            setLatestInvite({ roomId: created.roomId, url: created.inviteUrl });
+            if (navigator.clipboard) {
               await navigator.clipboard.writeText(created.inviteUrl).catch(() => undefined);
-              setCreating(false);
-              await loadRooms();
-            } catch (caught) {
-              setError(caught instanceof Error ? caught.message : '创建失败');
             }
+            await loadRooms().catch((caught) =>
+              setError(caught instanceof Error ? caught.message : '房间已创建，但列表刷新失败'),
+            );
+            setCreating(false);
           }}
         />
       )}
@@ -728,9 +778,14 @@ function AdminPage() {
           room={selectedRoom}
           users={users}
           players={roomPlayers}
-          onClose={() => setSelectedRoom(null)}
+          loading={roomPlayersLoading}
+          error={roomPlayersError}
+          onClose={() => {
+            setSelectedRoom(null);
+            setRoomPlayersError(null);
+          }}
           onRefresh={() => loadRoomPlayers(selectedRoom.id)}
-          onError={setError}
+          onError={setRoomPlayersError}
         />
       )}
     </main>
@@ -1009,6 +1064,8 @@ function RoomPlayersDialog({
   room,
   users,
   players,
+  loading,
+  error,
   onClose,
   onRefresh,
   onError,
@@ -1016,16 +1073,26 @@ function RoomPlayersDialog({
   room: AdminRoomSummary;
   users: AdminUserSummary[];
   players: AdminRoomPlayerSummary[];
+  loading: boolean;
+  error: string | null;
   onClose: () => void;
   onRefresh: () => Promise<void>;
-  onError: (message: string) => void;
+  onError: (message: string | null) => void;
 }) {
-  const assigned = new Set(players.map((player) => player.userId));
-  const availableUsers = users.filter((user) => user.loginEnabled && !assigned.has(user.id));
+  const availableUsers = useMemo(() => {
+    const assigned = new Set(players.map((player) => player.userId));
+    return users.filter((user) => user.loginEnabled && !assigned.has(user.id));
+  }, [players, users]);
   const [userId, setUserId] = useState(availableUsers[0]?.id ?? '');
   const [nickname, setNickname] = useState('');
   const [chipPlayer, setChipPlayer] = useState<AdminRoomPlayerSummary | null>(null);
   const [pending, setPending] = useState(false);
+
+  useEffect(() => {
+    if (!availableUsers.some((user) => user.id === userId)) {
+      setUserId(availableUsers[0]?.id ?? '');
+    }
+  }, [availableUsers, userId]);
 
   const mutate = async (path: string, body?: unknown): Promise<boolean> => {
     setPending(true);
@@ -1034,7 +1101,13 @@ function RoomPlayersDialog({
         method: 'POST',
         ...(body === undefined ? {} : { body: JSON.stringify(body) }),
       });
-      await onRefresh();
+      await onRefresh().catch((caught) =>
+        onError(
+          caught instanceof Error
+            ? `操作已成功，但列表刷新失败：${caught.message}`
+            : '操作已成功，但列表刷新失败',
+        ),
+      );
       return true;
     } catch (caught) {
       onError(caught instanceof Error ? caught.message : '管理操作失败');
@@ -1046,6 +1119,7 @@ function RoomPlayersDialog({
 
   return (
     <Modal title={`${room.name} · 玩家与筹码`} onClose={onClose}>
+      {error && <ErrorBox onClose={() => onError(null)}>{error}</ErrorBox>}
       <div className="room-player-tools">
         <button
           className="secondary-button"
@@ -1116,72 +1190,81 @@ function RoomPlayersDialog({
         </button>
       </form>
       <div className="room-player-list">
-        {players.map((player) => {
-          const inactive = player.membershipStatus !== 'ACTIVE';
-          return (
-            <article key={player.playerId} className={inactive ? 'inactive' : ''}>
-              <span className="avatar">{player.nickname.slice(0, 1).toUpperCase()}</span>
-              <span className="player-identity">
-                <strong>{player.nickname}</strong>
-                <small>
-                  @{player.username} · {player.seat === null ? '未选座' : `座位 ${player.seat + 1}`}{' '}
-                  · {player.connected ? '在线' : '离线'}
-                </small>
-              </span>
-              <span className="player-stack">
-                <small>筹码</small>
-                <strong>{formatPoints(player.stack)}</strong>
-              </span>
-              <span className="row-actions">
-                <button disabled={pending || inactive} onClick={() => setChipPlayer(player)}>
-                  <Icon name="chip" size={15} /> 调整
-                </button>
-                {inactive ? (
-                  <button
-                    disabled={pending}
-                    onClick={() =>
-                      void mutate(
-                        `/api/admin/rooms/${room.id}/players/${player.playerId}/restore`,
-                        {},
-                      )
-                    }
-                  >
-                    <Icon name="refresh" size={15} /> 恢复
+        {loading && (
+          <div className="empty-state" role="status">
+            正在载入房间成员…
+          </div>
+        )}
+        {!loading &&
+          players.map((player) => {
+            const inactive = player.membershipStatus !== 'ACTIVE';
+            return (
+              <article key={player.playerId} className={inactive ? 'inactive' : ''}>
+                <span className="avatar">{player.nickname.slice(0, 1).toUpperCase()}</span>
+                <span className="player-identity">
+                  <strong>{player.nickname}</strong>
+                  <small>
+                    @{player.username} ·{' '}
+                    {player.seat === null ? '未选座' : `座位 ${player.seat + 1}`} ·{' '}
+                    {player.connected ? '在线' : '离线'}
+                  </small>
+                </span>
+                <span className="player-stack">
+                  <small>筹码</small>
+                  <strong>{formatPoints(player.stack)}</strong>
+                </span>
+                <span className="row-actions">
+                  <button disabled={pending || inactive} onClick={() => setChipPlayer(player)}>
+                    <Icon name="chip" size={15} /> 调整
                   </button>
-                ) : (
-                  <button
-                    className="danger-link"
-                    disabled={pending}
-                    onClick={() => {
-                      if (window.confirm(`确定把 ${player.nickname} 移出房间？`))
-                        void mutate(`/api/admin/rooms/${room.id}/players/${player.playerId}/kick`, {
-                          reason: '管理员从控制台移出',
-                        });
-                    }}
-                  >
-                    <Icon name="door" size={15} /> 踢出
-                  </button>
-                )}
-              </span>
-            </article>
-          );
-        })}
-        {players.length === 0 && <div className="empty-state">这个房间还没有账号成员。</div>}
+                  {inactive ? (
+                    <button
+                      disabled={pending}
+                      onClick={() =>
+                        void mutate(
+                          `/api/admin/rooms/${room.id}/players/${player.playerId}/restore`,
+                          {},
+                        )
+                      }
+                    >
+                      <Icon name="refresh" size={15} /> 恢复
+                    </button>
+                  ) : (
+                    <button
+                      className="danger-link"
+                      disabled={pending}
+                      onClick={() => {
+                        if (window.confirm(`确定把 ${player.nickname} 移出房间？`))
+                          void mutate(
+                            `/api/admin/rooms/${room.id}/players/${player.playerId}/kick`,
+                            {
+                              reason: '管理员从控制台移出',
+                            },
+                          );
+                      }}
+                    >
+                      <Icon name="door" size={15} /> 踢出
+                    </button>
+                  )}
+                </span>
+              </article>
+            );
+          })}
+        {!loading && players.length === 0 && (
+          <div className="empty-state">这个房间还没有账号成员。</div>
+        )}
       </div>
       {chipPlayer && (
         <ChipDialog
           player={chipPlayer}
           onClose={() => setChipPlayer(null)}
-          onSubmit={async (stack, reason) => {
-            if (
-              await mutate(`/api/admin/rooms/${room.id}/players/${chipPlayer.playerId}/chips`, {
-                stack,
-                targetStack: stack,
-                reason,
-              })
-            )
-              setChipPlayer(null);
-          }}
+          onSubmit={(stack, reason) =>
+            mutate(`/api/admin/rooms/${room.id}/players/${chipPlayer.playerId}/chips`, {
+              stack,
+              targetStack: stack,
+              reason,
+            })
+          }
         />
       )}
     </Modal>
@@ -1195,20 +1278,29 @@ function ChipDialog({
 }: {
   player: AdminRoomPlayerSummary;
   onClose: () => void;
-  onSubmit: (stack: number, reason: string) => Promise<void>;
+  onSubmit: (stack: number, reason: string) => Promise<boolean>;
 }) {
   const [stack, setStack] = useState(player.stack);
   const [reason, setReason] = useState('线下筹码校准');
   const [pending, setPending] = useState(false);
+  const [error, setError] = useState<string | null>(null);
   return (
     <Modal title={`调整 ${player.nickname} 的筹码`} onClose={onClose}>
       <p>这是管理员校准动作。请按桌面实体筹码总量填写，保存后会进入审计记录。</p>
+      {error && <ErrorBox onClose={() => setError(null)}>{error}</ErrorBox>}
       <form
         className="sheet-form"
         onSubmit={(event) => {
           event.preventDefault();
           setPending(true);
-          void onSubmit(stack, reason.trim()).finally(() => setPending(false));
+          setError(null);
+          void onSubmit(stack, reason.trim())
+            .then((ok) => {
+              if (ok) onClose();
+              else setError('筹码调整未成功，请检查牌局状态后重试');
+            })
+            .catch((caught) => setError(caught instanceof Error ? caught.message : '筹码调整失败'))
+            .finally(() => setPending(false));
         }}
       >
         <label className="field">
@@ -1256,10 +1348,22 @@ function CreateRoomDialog({
   const [bigBlind, setBigBlind] = useState(20);
   const [stack, setStack] = useState(2_000);
   const [timeout, setTimeoutValue] = useState(30);
+  const [pending, setPending] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+  const valid =
+    name.trim().length > 0 &&
+    smallBlind > 0 &&
+    bigBlind >= smallBlind &&
+    stack >= bigBlind * 20 &&
+    timeout >= 10 &&
+    timeout <= 180;
   const submit = (event: FormEvent) => {
     event.preventDefault();
+    if (!valid || pending) return;
+    setPending(true);
+    setError(null);
     void onCreate({
-      name,
+      name: name.trim(),
       settings: {
         mode,
         smallBlind,
@@ -1271,17 +1375,21 @@ function CreateRoomDialog({
         nextHandCountdownSeconds: 5,
         maxPlayers: 6,
       },
-    });
+    })
+      .catch((caught) => setError(caught instanceof Error ? caught.message : '创建房间失败'))
+      .finally(() => setPending(false));
   };
   return (
     <Modal title="新建私密房间" onClose={onClose}>
       <form className="sheet-form" onSubmit={submit}>
+        {error && <ErrorBox onClose={() => setError(null)}>{error}</ErrorBox>}
         <div className="mode-choice">
           {(['ONLINE', 'LIVE'] as const).map((item) => (
             <button
               type="button"
               key={item}
               className={mode === item ? 'active' : ''}
+              aria-pressed={mode === item}
               onClick={() => setMode(item)}
             >
               <b>
@@ -1341,7 +1449,9 @@ function CreateRoomDialog({
           </label>
         </div>
         <p className="sheet-safety">房间第一手开始后规则锁定，模式无法切换。</p>
-        <button className="primary-button">创建并生成邀请</button>
+        <button className="primary-button" disabled={!valid || pending}>
+          {pending ? '正在创建…' : '创建并生成邀请'}
+        </button>
       </form>
     </Modal>
   );
@@ -1694,10 +1804,8 @@ function RoomPage({ roomId }: { roomId: string }) {
           <span>记录</span>
         </button>
       </header>
-      <div
-        className={`acting-banner ${isMyTurn ? 'acting-banner--mine' : ''}`}
-        style={{ '--progress': timerProgress } as CSSProperties}
-      >
+      <div className={`acting-banner ${isMyTurn ? 'acting-banner--mine' : ''}`}>
+        <progress className="acting-progress" max={1} value={timerProgress} aria-hidden="true" />
         <span className="sr-only" aria-live="polite">
           {actingAnnouncement}
         </span>
@@ -1828,9 +1936,7 @@ function RoomPage({ roomId }: { roomId: string }) {
         <LiveWinnerDialog
           room={room}
           onClose={() => setWinnerForm(false)}
-          onSubmit={async (winnersByPot) => {
-            if (await connection.send('live.resultPropose', { winnersByPot })) setWinnerForm(false);
-          }}
+          onSubmit={(winnersByPot) => connection.send('live.resultPropose', { winnersByPot })}
         />
       )}
       {historyOpen && (
@@ -2020,10 +2126,10 @@ function PlayingCard({
   const rank = cardRankLabel(card);
   const symbol: Record<string, string> = { s: '♠', h: '♥', d: '♦', c: '♣' };
   const suitName: Record<string, string> = { s: '黑桃', h: '红桃', d: '方片', c: '梅花' };
+  const normalizedDealIndex = Math.max(0, Math.min(4, Math.trunc(dealIndex)));
   return (
     <span
-      className={`playing-card ${compact ? 'playing-card--compact' : ''} ${suit === 'h' || suit === 'd' ? 'playing-card--red' : ''}`}
-      style={{ '--deal-index': dealIndex } as CSSProperties}
+      className={`playing-card playing-card--deal-${normalizedDealIndex} ${compact ? 'playing-card--compact' : ''} ${suit === 'h' || suit === 'd' ? 'playing-card--red' : ''}`}
       aria-label={`${suitName[suit]} ${rank}`}
     >
       <b>{rank}</b>
@@ -2078,6 +2184,7 @@ function OnlineActions({
     Number.isInteger(amount) &&
     amount >= minimum &&
     amount <= prompt.maxTo;
+  const timerPercent = Math.max(0, Math.min(1, seconds / room.settings.actionTimeoutSeconds)) * 100;
   return (
     <section className="operation-panel online-panel">
       <div className="operation-head">
@@ -2085,15 +2192,22 @@ function OnlineActions({
           <span className="eyebrow">YOUR TURN</span>
           <h2>轮到你行动</h2>
         </div>
-        <span
-          className="turn-timer"
-          style={
-            {
-              '--progress': `${Math.max(0, Math.min(1, seconds / room.settings.actionTimeoutSeconds)) * 100}%`,
-            } as CSSProperties
-          }
-        >
-          <i>{seconds}</i>
+        <span className="turn-timer">
+          <span className="turn-timer-ring">
+            <svg viewBox="0 0 42 42" aria-hidden="true">
+              <circle className="turn-timer-track" cx="21" cy="21" r="18" pathLength="100" />
+              <circle
+                className="turn-timer-value"
+                cx="21"
+                cy="21"
+                r="18"
+                pathLength="100"
+                strokeDasharray="100"
+                strokeDashoffset={100 - timerPercent}
+              />
+            </svg>
+            <i>{seconds}</i>
+          </span>
           <small>秒</small>
         </span>
       </div>
@@ -2250,9 +2364,12 @@ function ReadyConfirmation({
           <small> / {required}</small>
         </strong>
       </div>
-      <div className="ready-progress">
-        <i style={{ width: `${required ? (ready / required) * 100 : 0}%` }} />
-      </div>
+      <progress
+        className="ready-progress"
+        max={Math.max(1, required)}
+        value={Math.min(ready, Math.max(1, required))}
+        aria-label={`已确认 ${ready} 人，共需 ${required} 人`}
+      />
       <ul className="ready-list">
         {eligible.map((seat) => (
           <li key={seat.playerId} className={seat.ready ? 'confirmed' : ''}>
@@ -2614,14 +2731,17 @@ function LiveWinnerDialog({
 }: {
   room: PublicRoomProjection;
   onClose: () => void;
-  onSubmit: (winners: Record<string, string[]>) => Promise<void>;
+  onSubmit: (winners: Record<string, string[]>) => Promise<boolean>;
 }) {
   const initial = Object.fromEntries(
     room.pots.map((pot) => [pot.id, pot.eligiblePlayerIds.slice(0, 1)]),
   );
   const [winners, setWinners] = useState<Record<string, string[]>>(initial);
+  const [pending, setPending] = useState(false);
+  const [error, setError] = useState<string | null>(null);
   return (
     <Modal title="提交各底池赢家" onClose={onClose}>
+      {error && <ErrorBox onClose={() => setError(null)}>{error}</ErrorBox>}
       <div className="winner-pots">
         {room.pots.map((pot) => (
           <fieldset key={pot.id}>
@@ -2655,10 +2775,20 @@ function LiveWinnerDialog({
       <p className="sheet-safety">可勾选多名赢家以平分底池；奇数筹码按按钮位后顺时针分配。</p>
       <button
         className="primary-button"
-        disabled={room.pots.some((pot) => !winners[pot.id]?.length)}
-        onClick={() => void onSubmit(winners)}
+        disabled={pending || room.pots.some((pot) => !winners[pot.id]?.length)}
+        onClick={() => {
+          setPending(true);
+          setError(null);
+          void onSubmit(winners)
+            .then((ok) => {
+              if (ok) onClose();
+              else setError('提交未成功，牌桌状态可能已更新，请检查后重试');
+            })
+            .catch((caught) => setError(caught instanceof Error ? caught.message : '提交结果失败'))
+            .finally(() => setPending(false));
+        }}
       >
-        提交并开始 10 秒异议期
+        {pending ? '正在提交…' : '提交并开始 10 秒异议期'}
       </button>
     </Modal>
   );

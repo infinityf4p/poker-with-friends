@@ -190,15 +190,33 @@ export class PokerRepository {
 
   public async ensureConfiguredAdmin(): Promise<void> {
     if (!this.config.ADMIN_PASSWORD_HASH) return;
-    const existing = await this.db
-      .select({ id: admins.id })
-      .from(admins)
-      .where(eq(admins.username, this.config.ADMIN_USERNAME))
-      .limit(1);
-    if (existing.length > 0) return;
-    await this.db.insert(admins).values({
-      username: this.config.ADMIN_USERNAME,
-      passwordHash: this.config.ADMIN_PASSWORD_HASH,
+    await this.db.transaction(async (tx) => {
+      let [existing] = await tx
+        .select({ id: admins.id, passwordHash: admins.passwordHash })
+        .from(admins)
+        .where(eq(admins.username, this.config.ADMIN_USERNAME))
+        .limit(1);
+      if (!existing) {
+        await tx
+          .insert(admins)
+          .values({
+            username: this.config.ADMIN_USERNAME,
+            passwordHash: this.config.ADMIN_PASSWORD_HASH!,
+          })
+          .onConflictDoNothing({ target: admins.username });
+        [existing] = await tx
+          .select({ id: admins.id, passwordHash: admins.passwordHash })
+          .from(admins)
+          .where(eq(admins.username, this.config.ADMIN_USERNAME))
+          .limit(1);
+      }
+      if (existing && existing.passwordHash !== this.config.ADMIN_PASSWORD_HASH) {
+        await tx
+          .update(admins)
+          .set({ passwordHash: this.config.ADMIN_PASSWORD_HASH!, updatedAt: new Date() })
+          .where(eq(admins.id, existing.id));
+        await tx.delete(adminSessions).where(eq(adminSessions.adminId, existing.id));
+      }
     });
   }
 
@@ -598,9 +616,19 @@ export class PokerRepository {
     }));
   }
 
-  public async rotateInvite(roomId: string): Promise<string> {
+  public async rotateInvite(roomId: string, adminId: string): Promise<string> {
     const token = randomToken();
     await this.db.transaction(async (tx) => {
+      await tx.execute(
+        sql`select ${rooms.id} from ${rooms} where ${rooms.id} = ${roomId} for update`,
+      );
+      const [room] = await tx
+        .select({ status: rooms.status })
+        .from(rooms)
+        .where(eq(rooms.id, roomId))
+        .limit(1);
+      if (!room) throw new Error('ROOM_NOT_FOUND');
+      if (room.status === 'ARCHIVED') throw new Error('ROOM_ARCHIVED');
       await tx
         .update(roomInvites)
         .set({ revokedAt: new Date() })
@@ -608,6 +636,11 @@ export class PokerRepository {
       await tx.insert(roomInvites).values({
         roomId,
         tokenHash: hashOpaqueToken(token, this.config.TOKEN_PEPPER),
+      });
+      await tx.insert(auditLogs).values({
+        adminId,
+        roomId,
+        action: 'ROOM_INVITE_ROTATED',
       });
     });
     return token;
@@ -636,7 +669,19 @@ export class PokerRepository {
       )
       .limit(1);
     if (!invite) return null;
-    return this.addUserToRoom(invite.roomId, userId, nickname, 'INVITE');
+    try {
+      return await this.addUserToRoom(
+        invite.roomId,
+        userId,
+        nickname,
+        'INVITE',
+        undefined,
+        tokenHash,
+      );
+    } catch (error) {
+      if (error instanceof Error && error.message === 'INVITE_NOT_FOUND') return null;
+      throw error;
+    }
   }
 
   public async addUserToRoom(
@@ -645,45 +690,82 @@ export class PokerRepository {
     nickname: string | undefined,
     source: 'INVITE' | 'ADMIN',
     adminId?: string,
+    inviteTokenHash?: string,
   ): Promise<{ roomId: string; playerId: string }> {
-    const [[room], [account]] = await Promise.all([
-      this.db.select().from(rooms).where(eq(rooms.id, roomId)).limit(1),
-      this.db.select().from(userAccounts).where(eq(userAccounts.id, userId)).limit(1),
-    ]);
-    if (!room || room.status === 'ARCHIVED') throw new Error('ROOM_NOT_FOUND');
-    if (!account) throw new Error('USER_NOT_FOUND');
-    const existing = await this.db
-      .select({ id: players.id, membershipStatus: players.membershipStatus })
-      .from(players)
-      .where(and(eq(players.roomId, roomId), eq(players.userId, userId)))
-      .limit(1);
-    if (existing[0]) {
-      if (existing[0].membershipStatus === 'KICKED') throw new Error('MEMBERSHIP_KICKED');
-      return { roomId, playerId: existing[0].id };
-    }
-    const [count] = await this.db
-      .select({ value: sql<number>`count(*)::int` })
-      .from(players)
-      .where(and(eq(players.roomId, roomId), ne(players.membershipStatus, 'KICKED')));
-    if ((count?.value ?? 0) >= (room.settings as RoomSettings).maxPlayers) {
-      throw new Error('ROOM_FULL');
-    }
-    const playerNickname = nickname?.trim() || account.displayName;
-    const duplicate = await this.db
-      .select({ id: players.id })
-      .from(players)
-      .where(
-        and(
-          eq(players.roomId, roomId),
-          ne(players.membershipStatus, 'KICKED'),
-          sql`lower(${players.nickname}) = lower(${playerNickname})`,
-        ),
-      )
-      .limit(1);
-    if (duplicate.length > 0) throw new Error('NICKNAME_TAKEN');
-    const settings = room.settings as RoomSettings;
     try {
-      const [created] = await this.db.transaction(async (tx) => {
+      return await this.db.transaction(async (tx) => {
+        // Serialize membership changes for this room so concurrent invite joins
+        // cannot exceed capacity or claim the same case-insensitive nickname.
+        await tx.execute(
+          sql`select ${rooms.id} from ${rooms} where ${rooms.id} = ${roomId} for update`,
+        );
+        const [room] = await tx.select().from(rooms).where(eq(rooms.id, roomId)).limit(1);
+        if (!room || room.status === 'ARCHIVED') throw new Error('ROOM_NOT_FOUND');
+        if (source === 'INVITE') {
+          const [activeInvite] = inviteTokenHash
+            ? await tx
+                .select({ id: roomInvites.id })
+                .from(roomInvites)
+                .where(
+                  and(
+                    eq(roomInvites.roomId, roomId),
+                    eq(roomInvites.tokenHash, inviteTokenHash),
+                    isNull(roomInvites.revokedAt),
+                    sql`(${roomInvites.expiresAt} is null or ${roomInvites.expiresAt} > now())`,
+                  ),
+                )
+                .limit(1)
+            : [];
+          if (!activeInvite) throw new Error('INVITE_NOT_FOUND');
+        }
+        const [account] = await tx
+          .select()
+          .from(userAccounts)
+          .where(eq(userAccounts.id, userId))
+          .limit(1);
+        if (!account) throw new Error('USER_NOT_FOUND');
+
+        const [existing] = await tx
+          .select({ id: players.id, membershipStatus: players.membershipStatus })
+          .from(players)
+          .where(and(eq(players.roomId, roomId), eq(players.userId, userId)))
+          .limit(1);
+        if (existing) {
+          if (existing.membershipStatus === 'KICKED') throw new Error('MEMBERSHIP_KICKED');
+          return { roomId, playerId: existing.id };
+        }
+
+        const [count] = await tx
+          .select({ value: sql<number>`count(*)::int` })
+          .from(players)
+          .where(and(eq(players.roomId, roomId), ne(players.membershipStatus, 'KICKED')));
+        const settings = room.settings as RoomSettings;
+        if ((count?.value ?? 0) >= settings.maxPlayers) throw new Error('ROOM_FULL');
+
+        const fallbackNickname = account.linkedAdminId
+          ? account.displayName.slice(0, 20)
+          : account.displayName;
+        const playerNickname = nickname?.trim() || fallbackNickname;
+        if (
+          playerNickname.length === 0 ||
+          playerNickname.length > 20 ||
+          /[\u0000-\u001f\u007f-\u009f]/u.test(playerNickname)
+        ) {
+          throw new Error('INVALID_NICKNAME');
+        }
+        const duplicate = await tx
+          .select({ id: players.id })
+          .from(players)
+          .where(
+            and(
+              eq(players.roomId, roomId),
+              ne(players.membershipStatus, 'KICKED'),
+              sql`lower(${players.nickname}) = lower(${playerNickname})`,
+            ),
+          )
+          .limit(1);
+        if (duplicate.length > 0) throw new Error('NICKNAME_TAKEN');
+
         const inserted = await tx
           .insert(players)
           .values({
@@ -712,10 +794,8 @@ export class PokerRepository {
             metadata: { userId, playerId: player.id, source },
           });
         }
-        return inserted;
+        return { roomId, playerId: player.id };
       });
-      if (!created) throw new Error('Failed to create room membership');
-      return { roomId, playerId: created.id };
     } catch (error) {
       if (
         typeof error === 'object' &&

@@ -8,7 +8,7 @@ import {
   userLoginSchema,
 } from '@poker/protocol';
 import { describe, expect, it } from 'vitest';
-import { validationErrorBody } from './http.js';
+import { invalidRouteParameter, validationErrorBody } from './http.js';
 
 describe('permanent user auth contract', () => {
   it('accepts an administrator-created account and a strong temporary password', () => {
@@ -86,5 +86,12 @@ describe('permanent user auth contract', () => {
     expect(adminAdjustStackSchema.safeParse({ stack: -1, reason: 'bad' }).success).toBe(false);
     expect(adminKickPlayerSchema.parse({})).toEqual({ reason: '管理员移出' });
     expect(adminRestorePlayerSchema.parse({})).toEqual({});
+  });
+
+  it('rejects malformed database identifiers and invite tokens before querying PostgreSQL', () => {
+    expect(invalidRouteParameter({ id: 'not-a-uuid' })).toBe('id');
+    expect(invalidRouteParameter({ playerId: '00000000-0000-4000-8000-000000000012' })).toBeNull();
+    expect(invalidRouteParameter({ token: '../unexpected' })).toBe('token');
+    expect(invalidRouteParameter({ token: 'a'.repeat(43) })).toBeNull();
   });
 });

@@ -414,6 +414,19 @@ describe('RoomActor', () => {
       repository.commits.at(-1)?.playerMutations.find((mutation) => mutation.playerId === b.id),
     ).toMatchObject({ membershipStatus: 'KICKED', seat: null, connected: false });
 
+    actor.state.players.find((player) => player.id === a.id)!.nickname = b.nickname.toLowerCase();
+    const duplicateNickname = await actor.adminReinstatePlayer(
+      '00000000-0000-4000-8000-000000000099',
+      b.id,
+      randomUUID(),
+    );
+    expect(duplicateNickname).toMatchObject({
+      ok: false,
+      code: 'CONFLICT',
+      message: '该昵称已被其他有效玩家使用',
+    });
+    actor.state.players.find((player) => player.id === a.id)!.nickname = 'A';
+
     const restored = await actor.adminReinstatePlayer(
       '00000000-0000-4000-8000-000000000099',
       b.id,

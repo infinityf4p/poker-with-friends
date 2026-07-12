@@ -1569,6 +1569,15 @@ export class RoomActor {
       if (activeMembers >= this.state.settings.maxPlayers) {
         return { ok: false, code: 'CONFLICT', message: '房间有效玩家已满' };
       }
+      const nicknameTaken = this.state.players.some(
+        (candidate) =>
+          candidate.id !== playerId &&
+          candidate.membershipStatus !== 'KICKED' &&
+          candidate.nickname.toLowerCase() === player.nickname.toLowerCase(),
+      );
+      if (nicknameTaken) {
+        return { ok: false, code: 'CONFLICT', message: '该昵称已被其他有效玩家使用' };
+      }
       player.membershipStatus = 'ACTIVE';
       player.kickedAt = null;
       player.kickedByAdminId = null;

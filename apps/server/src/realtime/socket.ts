@@ -5,6 +5,7 @@ import type { ZodType } from 'zod';
 import {
   emptyCommandSchema,
   handActionCommandSchema,
+  identifierSchema,
   liveResultProposalIdCommandSchema,
   liveResultProposeCommandSchema,
   liveStreetDealtCommandSchema,
@@ -17,6 +18,8 @@ import type { AppConfig } from '../config.js';
 import type { PokerRepository } from '../repository.js';
 import type { RoomManager } from '../room/manager.js';
 import { PLAYER_COOKIE } from '../security/cookies.js';
+import { safeErrorLogContext } from '../security/logging.js';
+import { isAllowedBrowserOrigin } from '../security/origin.js';
 
 interface SocketData {
   playerId: string;
@@ -37,11 +40,19 @@ const badRequest = (message: string): CommandFailure => ({
   message,
 });
 
+const commandBusy = (): CommandFailure => ({
+  ok: false,
+  code: 'CONFLICT',
+  message: '操作过于频繁，请等待前面的命令完成',
+});
+
 export function registerSocketServer(app: FastifyInstance, deps: SocketDependencies): Server {
   const io = new Server(app.server, {
     path: '/socket.io/',
     serveClient: false,
     cors: { origin: deps.config.PUBLIC_ORIGIN, credentials: true },
+    allowRequest: (request, callback) =>
+      callback(null, isAllowedBrowserOrigin(request.headers.origin, deps.config.PUBLIC_ORIGIN)),
     connectionStateRecovery: {
       maxDisconnectionDuration: 2 * 60 * 1_000,
       skipMiddlewares: false,
@@ -62,7 +73,10 @@ export function registerSocketServer(app: FastifyInstance, deps: SocketDependenc
         .fetchSockets()
         .then((sockets) => sockets.forEach((socket) => socket.disconnect(true)))
         .catch((error: unknown) =>
-          app.log.error({ error, roomId, playerId }, 'failed to disconnect kicked player'),
+          app.log.error(
+            { failure: safeErrorLogContext(error), roomId, playerId },
+            'failed to disconnect kicked player',
+          ),
         );
     }
   });
@@ -71,7 +85,7 @@ export function registerSocketServer(app: FastifyInstance, deps: SocketDependenc
     try {
       const cookies = parseCookie(socket.request.headers.cookie ?? '');
       const requestedRoomId = socket.handshake.auth?.roomId;
-      if (typeof requestedRoomId !== 'string' || requestedRoomId.length > 64) {
+      if (!identifierSchema.safeParse(requestedRoomId).success) {
         return next(new Error('ROOM_REQUIRED'));
       }
       const player = await deps.repository.getPlayerBySession(
@@ -94,22 +108,47 @@ export function registerSocketServer(app: FastifyInstance, deps: SocketDependenc
       await deps.rooms.setConnected(roomId, playerId, true);
       socket.emit('room.snapshot', await deps.rooms.snapshot(roomId, playerId));
     } catch (error) {
-      app.log.error({ error, roomId, playerId }, 'socket room recovery failed');
+      app.log.error(
+        { failure: safeErrorLogContext(error), roomId, playerId },
+        'socket room recovery failed',
+      );
       socket.emit('room.error', { code: 'ROOM_FROZEN', message: '牌局恢复失败，禁止继续行动' });
       socket.disconnect(true);
       return;
     }
 
+    let commandsInFlight = 0;
     const command = <T>(
       event: string,
       schema: ZodType<T>,
       handler: (value: T) => Promise<CommandResult>,
     ) => {
       socket.on(event, async (input: unknown, ack?: Ack) => {
-        const parsed = schema.safeParse(input);
-        const result = parsed.success
-          ? await handler(parsed.data)
-          : badRequest(parsed.error.issues.map((issue) => issue.message).join('; '));
+        if (commandsInFlight >= 8) {
+          if (typeof ack === 'function') ack(commandBusy());
+          return;
+        }
+        commandsInFlight += 1;
+        let result: CommandResult;
+        try {
+          const parsed = schema.safeParse(input);
+          result = parsed.success
+            ? await handler(parsed.data)
+            : badRequest(parsed.error.issues.map((issue) => issue.message).join('; '));
+        } catch (error) {
+          app.log.error(
+            {
+              failure: safeErrorLogContext(error),
+              roomId,
+              playerId,
+              event,
+            },
+            'socket command failed',
+          );
+          result = { ok: false, code: 'INTERNAL_ERROR', message: '服务器暂时无法处理操作' };
+        } finally {
+          commandsInFlight -= 1;
+        }
         if (typeof ack === 'function') ack(result);
       });
     };
@@ -144,13 +183,16 @@ export function registerSocketServer(app: FastifyInstance, deps: SocketDependenc
 
     socket.on('disconnect', () => {
       setImmediate(async () => {
-        const remaining = await io.in(`player:${playerId}`).fetchSockets();
-        if (remaining.length === 0) {
-          try {
+        try {
+          const remaining = await io.in(`player:${playerId}`).fetchSockets();
+          if (remaining.length === 0) {
             await deps.rooms.setConnected(roomId, playerId, false);
-          } catch (error) {
-            app.log.error({ error, roomId, playerId }, 'failed to persist disconnect');
           }
+        } catch (error) {
+          app.log.error(
+            { failure: safeErrorLogContext(error), roomId, playerId },
+            'failed to persist disconnect',
+          );
         }
       });
     });

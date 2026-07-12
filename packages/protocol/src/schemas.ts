@@ -1,7 +1,8 @@
 import { z } from 'zod';
 
 const integerAmount = z.number().int().nonnegative().max(1_000_000_000);
-const identifier = z.string().uuid();
+export const identifierSchema = z.string().uuid();
+export const inviteTokenSchema = z.string().regex(/^[A-Za-z0-9_-]{32,128}$/, '邀请码格式无效');
 const usernameSchema = z
   .string()
   .trim()
@@ -87,7 +88,7 @@ export const createUserAccountSchema = z
 export const resetUserPasswordSchema = z.object({ password: userPasswordSchema });
 
 export const addRoomMemberSchema = z.object({
-  userId: identifier,
+  userId: identifierSchema,
   nickname: nicknameSchema.optional(),
 });
 
@@ -96,15 +97,15 @@ export const adminPlayAsSelfSchema = z.object({ nickname: nicknameSchema.optiona
 export const adminAdjustStackSchema = z.object({
   stack: integerAmount,
   reason: z.string().trim().min(1).max(120),
-  operationId: identifier.optional(),
+  operationId: identifierSchema.optional(),
 });
 
 export const adminKickPlayerSchema = z.object({
   reason: z.string().trim().min(1).max(120).default('管理员移出'),
-  operationId: identifier.optional(),
+  operationId: identifierSchema.optional(),
 });
 
-export const adminRestorePlayerSchema = z.object({ operationId: identifier.optional() });
+export const adminRestorePlayerSchema = z.object({ operationId: identifierSchema.optional() });
 
 export const createRoomSchema = z.object({
   name: z.string().trim().min(1).max(48),
@@ -116,7 +117,7 @@ export const joinRoomSchema = z.object({
 });
 
 export const commandBaseSchema = z.object({
-  commandId: identifier,
+  commandId: identifierSchema,
   expectedSeq: z.number().int().nonnegative(),
   turnToken: z.string().min(16).max(256).optional(),
 });
@@ -145,12 +146,12 @@ export const liveStreetDealtCommandSchema = commandBaseSchema.extend({
 
 export const liveResultProposeCommandSchema = commandBaseSchema.extend({
   payload: z.object({
-    winnersByPot: z.record(z.string().min(1), z.array(identifier).min(1).max(6)),
+    winnersByPot: z.record(z.string().min(1), z.array(identifierSchema).min(1).max(6)),
   }),
 });
 
 export const liveResultProposalIdCommandSchema = commandBaseSchema.extend({
-  payload: z.object({ proposalId: identifier }),
+  payload: z.object({ proposalId: identifierSchema }),
 });
 
 export type AdminLoginInput = z.infer<typeof adminLoginSchema>;
