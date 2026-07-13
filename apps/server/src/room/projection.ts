@@ -151,7 +151,12 @@ function projectSeat(state: RuntimeRoomState, seat: number): PublicSeat {
     folded: bettingPlayer?.folded ?? false,
     allIn: bettingPlayer?.allIn ?? false,
     role,
-    isActing: bettingPlayer?.playerId === hand?.betting.actorId,
+    isActing: Boolean(
+      hand &&
+      bettingPlayer &&
+      hand.betting.actorId !== null &&
+      bettingPlayer.playerId === hand.betting.actorId,
+    ),
     hasCards: hand?.participantIds.includes(player.id) ?? false,
     ...(revealed ? { revealedCards: hand?.holeCards[player.id] ?? [] } : {}),
     positions: positionsBySeat(state).get(seat) ?? [],

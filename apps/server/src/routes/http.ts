@@ -176,6 +176,12 @@ export async function registerHttpRoutes(
     return repository.listUserRooms(user.id);
   });
 
+  app.get('/api/rooms', async (request, reply) => {
+    const user = await requireUser(request, reply, repository);
+    if (!user) return;
+    return repository.listLobbyRooms(user.id);
+  });
+
   app.post(
     '/api/admin/login',
     { config: { rateLimit: { max: 5, timeWindow: '1 minute' } } },
@@ -511,6 +517,46 @@ export async function registerHttpRoutes(
       }
     },
   );
+
+  app.post<{ Params: { id: string } }>('/api/rooms/:id/enter', async (request, reply) => {
+    const user = await requireUser(request, reply, repository);
+    if (!user) return;
+    const parsed = joinRoomSchema.safeParse(request.body ?? {});
+    if (!parsed.success) return sendValidationError(reply, parsed.error.issues);
+    try {
+      const joined = await repository.addUserToRoom(
+        request.params.id,
+        user.id,
+        parsed.data.nickname,
+        'SELF',
+      );
+      await rooms.refreshPlayers(joined.roomId);
+      return reply.code(201).send(joined);
+    } catch (error) {
+      if (error instanceof Error && error.message === 'ROOM_NOT_FOUND') {
+        return reply.code(404).send({ error: 'ROOM_NOT_FOUND', message: '牌桌不存在或已结束' });
+      }
+      if (error instanceof Error && error.message === 'ROOM_FULL') {
+        return reply.code(409).send({ error: 'ROOM_FULL', message: '牌桌已经坐满了' });
+      }
+      if (error instanceof Error && error.message === 'NICKNAME_TAKEN') {
+        return reply.code(409).send({ error: 'NICKNAME_TAKEN', message: '桌上已有相同昵称' });
+      }
+      if (error instanceof Error && error.message === 'INVALID_NICKNAME') {
+        return reply.code(400).send({ error: 'BAD_REQUEST', message: '昵称格式无效' });
+      }
+      if (error instanceof Error && error.message === 'MEMBERSHIP_KICKED') {
+        return reply.code(409).send({
+          error: 'MEMBERSHIP_KICKED',
+          message: '你暂时不能重新加入这张牌桌',
+        });
+      }
+      if (error instanceof Error && error.message === 'MEMBERSHIP_CONFLICT') {
+        return reply.code(409).send({ error: 'MEMBERSHIP_CONFLICT', message: '你已经在这张牌桌' });
+      }
+      throw error;
+    }
+  });
 
   app.post<{ Params: { token: string } }>('/api/rooms/:token/join', async (request, reply) => {
     const user = await requireUser(request, reply, repository);

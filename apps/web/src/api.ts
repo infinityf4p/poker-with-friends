@@ -2,6 +2,7 @@ import type {
   AdminRoomPlayerSummary,
   AdminRoomSummary,
   AdminUserSummary,
+  LobbyRoomSummary,
   RoomMode,
   RoomSettings,
   RoomStatus,
@@ -88,6 +89,7 @@ export type {
   AdminRoomPlayerSummary,
   AdminRoomSummary,
   AdminUserSummary,
+  LobbyRoomSummary,
   UserRoomSummary,
   UserSession,
 };

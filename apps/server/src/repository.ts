@@ -26,6 +26,7 @@ import type {
   AdminUserSummary,
   CommandResult,
   HandHistoryItem,
+  LobbyRoomSummary,
   PublicRoomProjection,
   RoomSettings,
   RoomStatus,
@@ -688,7 +689,7 @@ export class PokerRepository {
     roomId: string,
     userId: string,
     nickname: string | undefined,
-    source: 'INVITE' | 'ADMIN',
+    source: 'INVITE' | 'ADMIN' | 'SELF',
     adminId?: string,
     inviteTokenHash?: string,
   ): Promise<{ roomId: string; playerId: string }> {
@@ -915,6 +916,71 @@ export class PokerRepository {
       .where(and(eq(players.userId, userId), ne(players.membershipStatus, 'KICKED')))
       .orderBy(desc(rooms.updatedAt));
     return rows;
+  }
+
+  public async listLobbyRooms(userId: string): Promise<LobbyRoomSummary[]> {
+    const roomRows = await this.db
+      .select({
+        roomId: rooms.id,
+        name: rooms.name,
+        mode: rooms.mode,
+        status: rooms.status,
+        handNumber: rooms.handNumber,
+        settings: rooms.settings,
+        updatedAt: rooms.updatedAt,
+      })
+      .from(rooms)
+      .where(ne(rooms.status, 'ARCHIVED'))
+      .orderBy(desc(rooms.updatedAt));
+    if (roomRows.length === 0) return [];
+
+    const roomIds = roomRows.map((room) => room.roomId);
+    const playerRows = await this.db
+      .select({
+        playerId: players.id,
+        userId: players.userId,
+        roomId: players.roomId,
+        nickname: players.nickname,
+        seat: players.seat,
+        stack: players.stack,
+        connected: players.connected,
+        membershipStatus: players.membershipStatus,
+        createdAt: players.createdAt,
+      })
+      .from(players)
+      .where(inArray(players.roomId, roomIds))
+      .orderBy(asc(players.createdAt));
+
+    return roomRows.map((room) => {
+      const settings = room.settings as RoomSettings;
+      const roomPlayers = playerRows.filter((player) => player.roomId === room.roomId);
+      const activePlayers = roomPlayers.filter((player) => player.membershipStatus !== 'KICKED');
+      const ownMembership = roomPlayers.find((player) => player.userId === userId) ?? null;
+      return {
+        roomId: room.roomId,
+        name: room.name,
+        mode: room.mode,
+        status: room.status,
+        handNumber: room.handNumber,
+        settings,
+        playerCount: activePlayers.length,
+        availableSeats: Math.max(0, settings.maxPlayers - activePlayers.length),
+        players: activePlayers.map((player) => ({
+          nickname: player.nickname,
+          seat: player.seat,
+          connected: player.connected,
+        })),
+        membership: ownMembership
+          ? {
+              playerId: ownMembership.playerId,
+              nickname: ownMembership.nickname,
+              seat: ownMembership.seat,
+              stack: ownMembership.stack,
+              status: ownMembership.membershipStatus,
+            }
+          : null,
+      };
+    });
   }
 
   public async listRoomPlayers(roomId: string): Promise<AdminRoomPlayerSummary[]> {

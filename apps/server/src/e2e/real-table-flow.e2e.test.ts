@@ -6,6 +6,7 @@ import type {
   AdminUserSummary,
   CommandResult,
   HandHistoryItem,
+  LobbyRoomSummary,
   PlayerAction,
   PrivatePlayerProjection,
   PublicRoomProjection,
@@ -535,7 +536,217 @@ describeWithDatabase('real HTTP + Socket.IO three-player table flow', () => {
     expect(skipped).toMatchObject({ stack: 0, positions: [], hasCards: false });
   }, 60_000);
 
+  it('lists every open room and completes a directly joined LIVE table flow', async () => {
+    const liveRoomCreated = await request<CreatedRoom>(admin, 'POST', '/api/admin/rooms', {
+      name: `线下全流程-${runId}`,
+      settings: {
+        mode: 'LIVE',
+        smallBlind: 10,
+        bigBlind: 20,
+        startingStack: 2_000,
+        stackCap: 2_000,
+        actionTimeoutSeconds: 180,
+        resultDisplaySeconds: 1,
+        nextHandCountdownSeconds: 1,
+        maxPlayers: 6,
+      },
+    });
+
+    const livePlayers: TestPlayer[] = [];
+    for (let index = 0; index < 2; index += 1) {
+      const account = await request<AdminUserSummary>(admin, 'POST', '/api/admin/users', {
+        username: `live_${runId}_${index + 1}`,
+        displayName: `线下玩家${index + 1}`,
+        password: initialPassword,
+      });
+      createdAccountIds.push(account.id);
+      const player: TestPlayer = {
+        accountId: account.id,
+        username: account.username,
+        nickname: account.displayName,
+        playerId: '',
+        cookie: '',
+      };
+      await request<UserSession>(player, 'POST', '/api/auth/login', {
+        username: player.username,
+        password: initialPassword,
+      });
+      await request<UserSession>(player, 'POST', '/api/auth/password', {
+        currentPassword: initialPassword,
+        newPassword: changedPassword,
+      });
+
+      const beforeJoin = await request<LobbyRoomSummary[]>(player, 'GET', '/api/rooms');
+      expect(beforeJoin.find((room) => room.roomId === liveRoomCreated.roomId)).toMatchObject({
+        name: `线下全流程-${runId}`,
+        mode: 'LIVE',
+        membership: null,
+      });
+      const membership = await request<RoomMembershipResponse>(
+        player,
+        'POST',
+        `/api/rooms/${liveRoomCreated.roomId}/enter`,
+        {},
+      );
+      player.playerId = membership.playerId;
+      livePlayers.push(player);
+
+      const afterJoin = await request<LobbyRoomSummary[]>(player, 'GET', '/api/rooms');
+      expect(afterJoin.find((room) => room.roomId === liveRoomCreated.roomId)).toMatchObject({
+        playerCount: index + 1,
+        availableSeats: 5 - index,
+        membership: { playerId: player.playerId, status: 'ACTIVE', seat: null },
+      });
+    }
+
+    let liveRoom: PublicRoomProjection | null = null;
+    const livePrivate = new Map<string, PrivatePlayerProjection>();
+    const currentLiveRoom = (): PublicRoomProjection => {
+      if (!liveRoom) throw new Error('LIVE room projection has not arrived');
+      return liveRoom;
+    };
+    const acceptLiveEnvelope = (envelope: RoomSnapshotEnvelope): void => {
+      if (!liveRoom || envelope.public.serverSeq >= liveRoom.serverSeq) liveRoom = envelope.public;
+      if (envelope.private) livePrivate.set(envelope.private.playerId, envelope.private);
+    };
+    const waitForLive = async (predicate: () => boolean, label: string): Promise<void> => {
+      const deadline = Date.now() + 10_000;
+      while (Date.now() < deadline) {
+        if (predicate()) return;
+        await new Promise((resolve) => setTimeout(resolve, 20));
+      }
+      throw new Error(`Timed out waiting for LIVE ${label}`);
+    };
+
+    for (const player of livePlayers) {
+      const socket = createSocket(baseUrl, {
+        path: '/socket.io/',
+        transports: ['websocket'],
+        extraHeaders: { Cookie: player.cookie },
+        auth: { roomId: liveRoomCreated.roomId },
+        autoConnect: false,
+        reconnection: false,
+      });
+      socket.on('room.snapshot', acceptLiveEnvelope);
+      socket.on('room.public', (projection: PublicRoomProjection) => {
+        if (!liveRoom || projection.serverSeq >= liveRoom.serverSeq) liveRoom = projection;
+      });
+      socket.on('room.private', (projection: PrivatePlayerProjection) => {
+        livePrivate.set(projection.playerId, projection);
+      });
+      sockets.set(player.playerId, socket);
+      const connected = new Promise<void>((resolve, reject) => {
+        socket.once('connect', () => resolve());
+        socket.once('connect_error', reject);
+      });
+      socket.connect();
+      await connected;
+      await waitForLive(
+        () => livePrivate.has(player.playerId),
+        `private state for ${player.playerId}`,
+      );
+    }
+
+    const liveCommand = async (
+      playerId: string,
+      event: string,
+      payload: Record<string, unknown>,
+      needsTurn = false,
+    ): Promise<void> => {
+      if (needsTurn) {
+        await waitForLive(
+          () =>
+            currentLiveRoom().prompt?.playerId === playerId &&
+            typeof livePrivate.get(playerId)?.turnToken === 'string',
+          `turn for ${playerId}`,
+        );
+      }
+      const socket = sockets.get(playerId);
+      if (!socket) throw new Error(`LIVE socket missing for ${playerId}`);
+      const result = await new Promise<CommandResult>((resolve, reject) => {
+        socket.timeout(8_000).emit(
+          event,
+          {
+            commandId: randomUUID(),
+            expectedSeq: currentLiveRoom().serverSeq,
+            ...(needsTurn ? { turnToken: livePrivate.get(playerId)?.turnToken } : {}),
+            payload,
+          },
+          (error: Error | null, commandResult: CommandResult) => {
+            if (error) reject(error);
+            else resolve(commandResult);
+          },
+        );
+      });
+      expect(result.ok, JSON.stringify(result)).toBe(true);
+      if (!result.ok) throw new Error(result.message);
+      acceptLiveEnvelope(result.data);
+    };
+
+    for (const [seat, player] of livePlayers.entries()) {
+      await liveCommand(player.playerId, 'seat.claim', { seat });
+      expect(currentLiveRoom().seats[seat]).toMatchObject({
+        playerId: player.playerId,
+        isActing: false,
+      });
+      expect(livePrivate.get(player.playerId)?.seat).toBe(seat);
+    }
+    expect(currentLiveRoom().requiredReadyCount).toBe(2);
+
+    for (const player of livePlayers) await liveCommand(player.playerId, 'player.ready', {});
+    await waitForLive(
+      () => currentLiveRoom().status === 'ACTIVE' && currentLiveRoom().phase === 'PREFLOP',
+      'hand start',
+    );
+
+    const finishLiveBettingRound = async (): Promise<void> => {
+      let guard = 0;
+      while (currentLiveRoom().prompt) {
+        if (guard++ > 4) throw new Error('LIVE betting round exceeded its bound');
+        const prompt = currentLiveRoom().prompt!;
+        const action: PlayerAction = prompt.legalActions.includes('CHECK') ? 'CHECK' : 'CALL';
+        await liveCommand(prompt.playerId, 'hand.act', { action }, true);
+      }
+    };
+
+    await finishLiveBettingRound();
+    for (const street of ['FLOP', 'TURN', 'RIVER'] as const) {
+      expect(currentLiveRoom().pendingLiveStreet).toBe(street);
+      const dealer = currentLiveRoom().seats.find(
+        (seat) => seat.seat === currentLiveRoom().liveDealerSeat,
+      );
+      if (!dealer?.playerId) throw new Error('LIVE dealer is missing');
+      await liveCommand(dealer.playerId, 'live.streetDealt', { street });
+      await finishLiveBettingRound();
+    }
+    expect(currentLiveRoom().phase).toBe('SHOWDOWN');
+
+    const dealer = currentLiveRoom().seats.find(
+      (seat) => seat.seat === currentLiveRoom().liveDealerSeat,
+    );
+    if (!dealer?.playerId) throw new Error('LIVE showdown dealer is missing');
+    const objector = livePlayers.find((player) => player.playerId !== dealer.playerId)!;
+    const winnersByPot = Object.fromEntries(
+      currentLiveRoom().pots.map((pot) => [pot.id, [pot.eligiblePlayerIds[0]!]]),
+    );
+    await liveCommand(dealer.playerId, 'live.resultPropose', { winnersByPot });
+    const firstProposal = currentLiveRoom().liveResultProposal;
+    if (!firstProposal) throw new Error('first LIVE proposal is missing');
+    await liveCommand(objector.playerId, 'live.resultObject', { proposalId: firstProposal.id });
+    await liveCommand(dealer.playerId, 'live.resultPropose', { winnersByPot });
+    const replacement = currentLiveRoom().liveResultProposal;
+    if (!replacement) throw new Error('replacement LIVE proposal is missing');
+    await liveCommand(objector.playerId, 'live.resultConfirm', { proposalId: replacement.id });
+
+    expect(currentLiveRoom().status).toBe('BETWEEN_HANDS');
+    expect(currentLiveRoom().phase).toBe('SETTLED');
+    expect(
+      currentLiveRoom().seats.reduce((sum, seat) => sum + (seat.playerId ? seat.stack : 0), 0),
+    ).toBe(4_000);
+  }, 60_000);
+
   it('serializes concurrent joins so a six-player room never overfills', async () => {
+    const capacityAccountIds = createdAccountIds.slice(0, 3);
     for (let index = 0; index < 4; index += 1) {
       const account = await request<AdminUserSummary>(admin, 'POST', '/api/admin/users', {
         username: `capacity_${runId}_${index + 1}`,
@@ -543,6 +754,7 @@ describeWithDatabase('real HTTP + Socket.IO three-player table flow', () => {
         password: initialPassword,
       });
       createdAccountIds.push(account.id);
+      capacityAccountIds.push(account.id);
     }
 
     const room = await request<CreatedRoom>(admin, 'POST', '/api/admin/rooms', {
@@ -561,7 +773,7 @@ describeWithDatabase('real HTTP + Socket.IO three-player table flow', () => {
     });
 
     const results = await Promise.all(
-      createdAccountIds.map(async (userId, index) => {
+      capacityAccountIds.map(async (userId, index) => {
         const response = await fetch(`${baseUrl}/api/admin/rooms/${room.roomId}/players`, {
           method: 'POST',
           headers: { cookie: admin.cookie, 'content-type': 'application/json' },

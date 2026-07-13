@@ -184,6 +184,34 @@ async function driveLiveToShowdown(actor: RoomActor): Promise<void> {
 }
 
 describe('RoomActor', () => {
+  it('lets a LIVE player claim an empty seat without marking lobby seats as acting', async () => {
+    const loaded = loadedRoom('LIVE');
+    loaded.players[0]!.seat = null;
+    const repository = new FakeRepository();
+    const actor = new RoomActor(loaded, repository as unknown as PokerRepository, () => undefined);
+    const player = actor.state.players[0]!;
+
+    await actor.setConnected(player.id, true);
+    const result = await actor.seatClaim(player.id, {
+      commandId: randomUUID(),
+      expectedSeq: actor.state.serverSeq,
+      payload: { seat: 3 },
+    });
+
+    expect(result.ok).toBe(true);
+    expect(actor.snapshot(player.id).private?.seat).toBe(3);
+    expect(actor.snapshot(player.id).public.seats[3]).toMatchObject({
+      playerId: player.id,
+      isActing: false,
+    });
+    expect(
+      actor
+        .snapshot(player.id)
+        .public.seats.filter((seat) => seat.playerId)
+        .every((seat) => !seat.isActing),
+    ).toBe(true);
+  });
+
   it.each(['ONLINE', 'LIVE'] as const)(
     'completes 100 consecutive %s hands without manual ledger repair',
     async (mode) => {

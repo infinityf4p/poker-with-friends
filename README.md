@@ -1,6 +1,6 @@
 # Poker Infinity
 
-Poker Infinity 是一个邀请制、移动端优先的德州扑克辅助应用：
+Poker Infinity 是一个账号登录、共享牌桌大厅、移动端优先的德州扑克应用。所有已登录玩家都能查看并直接加入未结束的牌桌：
 
 - `ONLINE`：由服务端洗牌、发牌、判断牌型和结算。
 - `LIVE`：配合线下实体扑克牌，只记录数字筹码、行动顺序、底池和争议确认。
@@ -65,7 +65,7 @@ docker compose ps
 - `MINOR`：向后兼容的新功能或迁移；
 - `PATCH`：向后兼容的修复。
 
-生产镜像应使用不可变的 Git 提交 SHA 或发布标签，不建议使用浮动的 `latest` 作为回滚依据。每个公开版本必须通过 CI、容器构建、密钥扫描和 CodeQL，并附带迁移与回滚说明。发布流程见 [公开发布清单](./docs/PUBLIC_RELEASE_CHECKLIST.md)，当前版本说明见 [v0.3.1](./docs/releases/v0.3.1.md)。
+生产镜像应使用不可变的 Git 提交 SHA 或发布标签，不建议使用浮动的 `latest` 作为回滚依据。每个公开版本必须通过 CI、容器构建、密钥扫描和 CodeQL，并附带迁移与回滚说明。发布流程见 [公开发布清单](./docs/PUBLIC_RELEASE_CHECKLIST.md)，当前版本说明见 [v0.3.2](./docs/releases/v0.3.2.md)。
 
 ## 许可证
 

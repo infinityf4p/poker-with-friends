@@ -180,6 +180,31 @@ export interface UserRoomSummary {
   membershipStatus: MembershipStatus;
 }
 
+export interface LobbyRoomPlayerSummary {
+  nickname: string;
+  seat: number | null;
+  connected: boolean;
+}
+
+export interface LobbyRoomSummary {
+  roomId: string;
+  name: string;
+  mode: RoomMode;
+  status: RoomStatus;
+  handNumber: number;
+  settings: RoomSettings;
+  playerCount: number;
+  availableSeats: number;
+  players: LobbyRoomPlayerSummary[];
+  membership: {
+    playerId: string;
+    nickname: string;
+    seat: number | null;
+    stack: number;
+    status: MembershipStatus;
+  } | null;
+}
+
 export interface AdminUserSummary extends UserSession {
   loginEnabled: boolean;
   linkedAdminId: string | null;
