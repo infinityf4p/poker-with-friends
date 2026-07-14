@@ -62,7 +62,24 @@ function navigate(path: string): void {
 
 function Brand({ compact = false }: { compact?: boolean }) {
   return (
-    <button className="brand real-brand" onClick={() => navigate('/')} aria-label="返回首页">
+    <a
+      className="brand real-brand"
+      href="/"
+      onClick={(event) => {
+        if (
+          event.button !== 0 ||
+          event.metaKey ||
+          event.ctrlKey ||
+          event.shiftKey ||
+          event.altKey
+        ) {
+          return;
+        }
+        event.preventDefault();
+        navigate('/');
+      }}
+      aria-label="返回首页"
+    >
       <span className="brand-mark real-brand-mark">
         <Icon name="spade" size={23} />
       </span>
@@ -71,7 +88,7 @@ function Brand({ compact = false }: { compact?: boolean }) {
           <strong>Poker with Friends</strong>
         </span>
       )}
-    </button>
+    </a>
   );
 }
 
@@ -86,8 +103,8 @@ function ModeBadge({ mode }: { mode: RoomMode }) {
 
 function Loading({ label = '正在加载…' }: { label?: string }) {
   return (
-    <main className="state-page">
-      <span className="loader" />
+    <main className="state-page" role="status" aria-live="polite" aria-busy="true">
+      <span className="loader" aria-hidden="true" />
       <p>{label}</p>
     </main>
   );
@@ -140,6 +157,17 @@ function App() {
     window.addEventListener('popstate', update);
     return () => window.removeEventListener('popstate', update);
   }, []);
+  useEffect(() => {
+    const pageTitle =
+      route.kind === 'admin'
+        ? '管理后台'
+        : route.kind === 'join'
+          ? '加入牌桌'
+          : route.kind === 'room'
+            ? '牌桌'
+            : '牌桌大厅';
+    document.title = `${pageTitle} · Poker with Friends`;
+  }, [route]);
 
   if (route.kind === 'admin') return <AdminPage />;
   if (route.kind === 'join') return <JoinPage token={route.token} />;
@@ -151,10 +179,23 @@ function HomePage() {
   const [session, setSession] = useState<UserSession | null>(null);
   const [rooms, setRooms] = useState<LobbyRoomSummary[]>([]);
   const [checking, setChecking] = useState(true);
+  const [refreshing, setRefreshing] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [joiningRoomId, setJoiningRoomId] = useState<string | null>(null);
 
   const loadRooms = async () => setRooms(await api<LobbyRoomSummary[]>('/api/rooms'));
+  const refreshRooms = async () => {
+    if (refreshing) return;
+    setRefreshing(true);
+    setError(null);
+    try {
+      await loadRooms();
+    } catch (caught) {
+      setError(caught instanceof Error ? caught.message : '牌桌列表刷新失败');
+    } finally {
+      setRefreshing(false);
+    }
+  };
   useEffect(() => {
     api<UserSession>('/api/auth/session')
       .then((user) => {
@@ -282,10 +323,12 @@ function HomePage() {
             <button
               type="button"
               className="lobby-refresh"
-              onClick={() => void loadRooms()}
+              onClick={() => void refreshRooms()}
+              disabled={refreshing}
+              aria-busy={refreshing}
               aria-label="刷新牌桌列表"
             >
-              <Icon name="refresh" size={16} /> 刷新
+              <Icon name="refresh" size={16} /> {refreshing ? '刷新中' : '刷新'}
             </button>
           </header>
           <div className="lobby-room-grid">
@@ -346,7 +389,7 @@ function LobbyRoomCard({
         </span>
         <span className="lobby-room-title">
           <ModeBadge mode={room.mode} />
-          <strong>{room.name}</strong>
+          <h3>{room.name}</h3>
         </span>
         <span className={`room-live-state ${room.status === 'ACTIVE' ? 'is-playing' : ''}`}>
           <i /> {statusLabel[room.status] ?? room.status}
@@ -522,6 +565,7 @@ function AdminPage() {
   const [roomPlayersLoading, setRoomPlayersLoading] = useState(false);
   const [roomPlayersError, setRoomPlayersError] = useState<string | null>(null);
   const [latestInvite, setLatestInvite] = useState<{ roomId: string; url: string } | null>(null);
+  const [inviteCopyStatus, setInviteCopyStatus] = useState<'idle' | 'copied'>('idle');
   const [rotatingRoomId, setRotatingRoomId] = useState<string | null>(null);
 
   const loadRooms = async () => setRooms(await api<AdminRoomSummary[]>('/api/admin/rooms'));
@@ -570,8 +614,12 @@ function AdminPage() {
         method: 'POST',
       });
       setLatestInvite({ roomId, url: result.inviteUrl });
+      setInviteCopyStatus('idle');
       if (navigator.clipboard) {
-        await navigator.clipboard.writeText(result.inviteUrl).catch(() => undefined);
+        await navigator.clipboard
+          .writeText(result.inviteUrl)
+          .then(() => setInviteCopyStatus('copied'))
+          .catch(() => undefined);
       }
     } catch (caught) {
       setError(caught instanceof Error ? caught.message : '生成邀请失败');
@@ -599,6 +647,8 @@ function AdminPage() {
         <Brand />
         <button
           className="profile-button"
+          aria-label={`退出管理员账号 ${session.username}`}
+          title="退出管理员账号"
           onClick={async () => {
             try {
               await api('/api/admin/logout', { method: 'POST' });
@@ -613,7 +663,7 @@ function AdminPage() {
             <strong>{session.username}</strong>
           </span>
           <b className="admin-avatar">
-            <Icon name="shield" size={18} />
+            <Icon name="logout" size={18} />
           </b>
         </button>
       </header>
@@ -653,7 +703,9 @@ function AdminPage() {
         {latestInvite && (
           <div className="invite-output">
             <div>
-              <small>邀请链接已更新</small>
+              <small role="status" aria-live="polite">
+                {inviteCopyStatus === 'copied' ? '邀请链接已复制' : '邀请链接已更新'}
+              </small>
               <code>{latestInvite.url}</code>
             </div>
             <button
@@ -662,12 +714,14 @@ function AdminPage() {
                   setError('当前浏览器无法自动复制，请长按或选中邀请链接手动复制');
                   return;
                 }
+                setInviteCopyStatus('idle');
                 void navigator.clipboard
                   .writeText(latestInvite.url)
+                  .then(() => setInviteCopyStatus('copied'))
                   .catch(() => setError('复制失败，请长按或选中邀请链接手动复制'));
               }}
             >
-              复制
+              {inviteCopyStatus === 'copied' ? '已复制' : '复制'}
             </button>
           </div>
         )}
@@ -757,8 +811,12 @@ function AdminPage() {
               body: JSON.stringify(body),
             });
             setLatestInvite({ roomId: created.roomId, url: created.inviteUrl });
+            setInviteCopyStatus('idle');
             if (navigator.clipboard) {
-              await navigator.clipboard.writeText(created.inviteUrl).catch(() => undefined);
+              await navigator.clipboard
+                .writeText(created.inviteUrl)
+                .then(() => setInviteCopyStatus('copied'))
+                .catch(() => undefined);
             }
             await loadRooms().catch((caught) =>
               setError(caught instanceof Error ? caught.message : '牌桌已创建，列表刷新失败'),
@@ -1368,14 +1426,29 @@ function CreateRoomDialog({
     <Modal title="新建牌桌" onClose={onClose}>
       <form className="sheet-form" onSubmit={submit}>
         {error && <ErrorBox onClose={() => setError(null)}>{error}</ErrorBox>}
-        <div className="mode-choice">
+        <div className="mode-choice" role="radiogroup" aria-label="牌桌模式">
           {(['ONLINE', 'LIVE'] as const).map((item) => (
             <button
               type="button"
+              role="radio"
               key={item}
               className={mode === item ? 'active' : ''}
-              aria-pressed={mode === item}
+              aria-checked={mode === item}
+              tabIndex={mode === item ? 0 : -1}
               onClick={() => setMode(item)}
+              onKeyDown={(event) => {
+                if (!['ArrowLeft', 'ArrowRight', 'ArrowUp', 'ArrowDown'].includes(event.key)) {
+                  return;
+                }
+                event.preventDefault();
+                const nextMode = mode === 'ONLINE' ? 'LIVE' : 'ONLINE';
+                setMode(nextMode);
+                const radios =
+                  event.currentTarget.parentElement?.querySelectorAll<HTMLButtonElement>(
+                    '[role="radio"]',
+                  );
+                radios?.[nextMode === 'ONLINE' ? 0 : 1]?.focus();
+              }}
             >
               <b>
                 <Icon name={item === 'ONLINE' ? 'cards' : 'table'} size={23} />
@@ -1633,6 +1706,18 @@ function RoomPage({ roomId }: { roomId: string }) {
     return () => window.clearInterval(timer);
   }, [room?.liveResultProposal, room?.nextHandAt, room?.prompt?.deadlineAt]);
 
+  useEffect(() => {
+    if (!notice) return;
+    const timeout = window.setTimeout(() => setNotice(null), 4_500);
+    return () => window.clearTimeout(timeout);
+  }, [notice]);
+
+  useEffect(() => {
+    if (!me || room?.prompt?.playerId !== me.playerId) return;
+    if (!window.matchMedia('(max-width: 919px)').matches) return;
+    window.scrollTo({ top: 0, left: 0 });
+  }, [me?.playerId, room?.prompt?.playerId]);
+
   const send = async (
     event: string,
     payload: Record<string, unknown> = {},
@@ -1741,7 +1826,7 @@ function RoomPage({ roomId }: { roomId: string }) {
             {connection.connected ? '在线' : '重连中'}
             {publicView && ' · 旁观中'}
           </span>
-          <strong>{room.name}</strong>
+          <h1>{room.name}</h1>
           <small>
             第 {room.handNumber} 手 · {statusLabel[room.status] ?? room.status}
           </small>
@@ -1786,7 +1871,7 @@ function RoomPage({ roomId }: { roomId: string }) {
           )}
           {pageError && <ErrorBox onClose={() => setPageError(null)}>{pageError}</ErrorBox>}
           {notice && (
-            <div className="success-box" role="status" onAnimationEnd={() => setNotice(null)}>
+            <div className="success-box" role="status">
               {notice}
             </div>
           )}
@@ -1938,7 +2023,10 @@ function PokerTable({
   const totalPot = room.pots.reduce((sum, pot) => sum + pot.amount, 0);
   const positions = positionsForRoom(room);
   return (
-    <div className={`table-arena table-arena--${room.mode.toLowerCase()} real-table-arena`}>
+    <section
+      className={`table-arena table-arena--${room.mode.toLowerCase()} real-table-arena`}
+      aria-label="牌桌"
+    >
       <div className="felt-table">
         <div className="felt-line" />
         <div className="real-table-center">
@@ -1951,7 +2039,7 @@ function PokerTable({
           </div>
           {room.mode === 'ONLINE' ? (
             <>
-              <div className="community-cards">
+              <div className="community-cards" role="group" aria-label="公共牌">
                 {room.communityCards.map((card, index) => (
                   <PlayingCard
                     card={card}
@@ -1963,7 +2051,7 @@ function PokerTable({
                   <span className="card-placeholder" key={index} />
                 ))}
               </div>
-              <div className="hero-cards">
+              <div className="hero-cards" role="group" aria-label="你的手牌">
                 {holeCards.map((card) => (
                   <PlayingCard
                     card={card}
@@ -2001,7 +2089,7 @@ function PokerTable({
           onClaim={() => onClaim(seat.seat)}
         />
       ))}
-    </div>
+    </section>
   );
 }
 
@@ -2100,6 +2188,7 @@ function PlayingCard({
   return (
     <span
       className={`playing-card playing-card--deal-${normalizedDealIndex} ${compact ? 'playing-card--compact' : ''} ${suit === 'h' || suit === 'd' ? 'playing-card--red' : ''}`}
+      role="img"
       aria-label={`${suitName[suit]} ${rank}`}
     >
       <b>{rank}</b>
@@ -2481,6 +2570,7 @@ function MobileActionDock({
               step={room.settings.smallBlind}
               value={valid ? amount : minimum}
               onChange={(event) => setAmountInput(event.target.value)}
+              aria-label={wagerAction === 'BET_TO' ? '下注到' : '加注到'}
             />
             <div className="range-bounds">
               <span>最小 {formatPoints(minimum)}</span>
@@ -2943,6 +3033,7 @@ function HistoryDialog({
 
 let bodyScrollLockCount = 0;
 let bodyOverflowBeforeModal = '';
+const modalBackgroundLocks = new Map<HTMLElement, { count: number; initiallyInert: boolean }>();
 
 function lockBodyScroll(): () => void {
   if (bodyScrollLockCount === 0) {
@@ -2955,6 +3046,35 @@ function lockBodyScroll(): () => void {
     if (bodyScrollLockCount === 0) {
       document.body.style.overflow = bodyOverflowBeforeModal;
       bodyOverflowBeforeModal = '';
+    }
+  };
+}
+
+function lockModalBackground(currentBackdrop: HTMLElement | null): () => void {
+  const backgrounds = Array.from(document.body.children).filter(
+    (element): element is HTMLElement =>
+      element instanceof HTMLElement && element !== currentBackdrop,
+  );
+  for (const element of backgrounds) {
+    const current = modalBackgroundLocks.get(element);
+    if (current) {
+      current.count += 1;
+    } else {
+      modalBackgroundLocks.set(element, {
+        count: 1,
+        initiallyInert: element.hasAttribute('inert'),
+      });
+    }
+    element.setAttribute('inert', '');
+  }
+  return () => {
+    for (const element of backgrounds) {
+      const current = modalBackgroundLocks.get(element);
+      if (!current) continue;
+      current.count -= 1;
+      if (current.count > 0) continue;
+      if (!current.initiallyInert) element.removeAttribute('inert');
+      modalBackgroundLocks.delete(element);
     }
   };
 }
@@ -2978,6 +3098,7 @@ function Modal({
     const previousFocus =
       document.activeElement instanceof HTMLElement ? document.activeElement : null;
     const unlockBodyScroll = lockBodyScroll();
+    const unlockModalBackground = lockModalBackground(dialogRef.current?.parentElement ?? null);
     const frame = window.requestAnimationFrame(() => {
       const activeElement =
         document.activeElement instanceof HTMLElement ? document.activeElement : null;
@@ -2990,6 +3111,7 @@ function Modal({
     });
     return () => {
       window.cancelAnimationFrame(frame);
+      unlockModalBackground();
       unlockBodyScroll();
       previousFocus?.focus();
     };
@@ -3010,12 +3132,16 @@ function Modal({
         aria-labelledby={titleId}
         tabIndex={-1}
         onKeyDown={(event) => {
-          if (event.key === 'Escape' && !locked && onClose) {
-            event.preventDefault();
-            onClose();
+          if (event.key === 'Escape') {
+            event.stopPropagation();
+            if (!locked && onClose) {
+              event.preventDefault();
+              onClose();
+            }
             return;
           }
           if (event.key !== 'Tab') return;
+          event.stopPropagation();
           const controls = Array.from(
             dialogRef.current?.querySelectorAll<HTMLElement>(
               'button:not([disabled]), input:not([disabled]), select:not([disabled]), textarea:not([disabled]), [tabindex]:not([tabindex="-1"])',
