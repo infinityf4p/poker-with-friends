@@ -1,5 +1,5 @@
 [Unit]
-Description=Poker Infinity PostgreSQL backup
+Description=Poker with Friends PostgreSQL backup
 Wants=network-online.target
 After=network-online.target docker.service
 
@@ -7,8 +7,8 @@ After=network-online.target docker.service
 Type=oneshot
 User=root
 Group=root
-EnvironmentFile=-/etc/poker-infinity/pg-backup.env
-ExecStart=/usr/local/libexec/poker-infinity/pg-backup.sh
+EnvironmentFile=-/etc/poker-with-friends/pg-backup.env
+ExecStart=/usr/local/libexec/poker-with-friends/pg-backup.sh
 UMask=0077
 Nice=10
 IOSchedulingClass=best-effort

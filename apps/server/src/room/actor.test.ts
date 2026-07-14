@@ -1,6 +1,10 @@
 import { randomUUID } from 'node:crypto';
-import { getLegalActions } from '@poker/engine';
-import { DEFAULT_ROOM_SETTINGS, type CommandResult, type RoomMode } from '@poker/protocol';
+import { getLegalActions } from '@poker-with-friends/engine';
+import {
+  DEFAULT_ROOM_SETTINGS,
+  type CommandResult,
+  type RoomMode,
+} from '@poker-with-friends/protocol';
 import { describe, expect, it, vi } from 'vitest';
 import type { LoadedRoom, PokerRepository, RoomCommit } from '../repository.js';
 import { RoomActor } from './actor.js';

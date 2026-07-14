@@ -1,6 +1,6 @@
 {
-  "name": "@poker/db",
-  "version": "0.3.3",
+  "name": "@poker-with-friends/db",
+  "version": "0.4.0",
   "private": true,
   "type": "module",
   "exports": {

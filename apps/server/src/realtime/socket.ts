@@ -13,7 +13,7 @@ import {
   topUpCommandSchema,
   type CommandFailure,
   type CommandResult,
-} from '@poker/protocol';
+} from '@poker-with-friends/protocol';
 import type { AppConfig } from '../config.js';
 import type { PokerRepository } from '../repository.js';
 import type { RoomManager } from '../room/manager.js';

@@ -8,7 +8,7 @@ import type {
   RoomStatus,
   UserRoomSummary,
   UserSession,
-} from '@poker/protocol';
+} from '@poker-with-friends/protocol';
 
 export class ApiError extends Error {
   public constructor(

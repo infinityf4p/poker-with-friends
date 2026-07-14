@@ -7,9 +7,9 @@ import type {
   PublicRoomProjection,
   PublicSeat,
   TablePosition,
-} from '@poker/protocol';
+} from '@poker-with-friends/protocol';
 
-export type { TablePosition } from '@poker/protocol';
+export type { TablePosition } from '@poker-with-friends/protocol';
 
 export type EnhancedSeat = PublicSeat;
 

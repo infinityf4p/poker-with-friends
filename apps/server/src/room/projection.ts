@@ -1,4 +1,4 @@
-import { buildSidePots, getLegalActions, orderedSeatsAfter } from '@poker/engine';
+import { buildSidePots, getLegalActions, orderedSeatsAfter } from '@poker-with-friends/engine';
 import type {
   PlayerAction,
   PotProjection,
@@ -6,7 +6,7 @@ import type {
   PublicActionPrompt,
   PublicRoomProjection,
   PublicSeat,
-} from '@poker/protocol';
+} from '@poker-with-friends/protocol';
 import { liveProposalProjection, type ProjectionBundle, type RuntimeRoomState } from './state.js';
 
 type TablePosition = 'BTN' | 'SB' | 'BB' | 'UTG' | 'HJ' | 'CO';

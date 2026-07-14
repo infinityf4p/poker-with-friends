@@ -1,4 +1,4 @@
-import { createDatabase } from '@poker/db';
+import { createDatabase } from '@poker-with-friends/db';
 import { buildApp } from './app.js';
 import { loadConfig } from './config.js';
 import { PokerRepository } from './repository.js';
@@ -37,5 +37,5 @@ process.once('SIGINT', () => void shutdown('SIGINT'));
 await app.listen({ host: config.HOST, port: config.PORT });
 app.log.info(
   { host: config.HOST, port: config.PORT, build: config.APP_BUILD_SHA },
-  'poker server ready',
+  'Poker with Friends server ready',
 );

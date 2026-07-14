@@ -20,7 +20,7 @@ Options:
   --user NAME              PostgreSQL role (default: poker).
   --host HOST              Host-mode database host (default: 127.0.0.1).
   --port PORT              Host-mode database port (default: 5432).
-  --container NAME         Docker-mode container (default: poker-postgres).
+  --container NAME         Docker-mode container (default: poker-with-friends-postgres).
   --dry-run                Validate and print the planned operation only.
   -h, --help               Show this help.
 
@@ -37,7 +37,7 @@ database="${PGDATABASE:-poker}"
 db_user="${PGUSER:-poker}"
 db_host="${PGHOST:-127.0.0.1}"
 db_port="${PGPORT:-5432}"
-container="${PG_CONTAINER:-poker-postgres}"
+container="${PG_CONTAINER:-poker-with-friends-postgres}"
 dry_run=false
 
 while (($# > 0)); do

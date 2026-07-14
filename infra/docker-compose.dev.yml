@@ -1,4 +1,4 @@
-name: poker-infinity-dev
+name: poker-with-friends-dev
 
 services:
   postgres:

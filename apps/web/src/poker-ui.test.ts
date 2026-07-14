@@ -1,4 +1,9 @@
-import type { Card, HandHistoryItem, PublicRoomProjection, PublicSeat } from '@poker/protocol';
+import type {
+  Card,
+  HandHistoryItem,
+  PublicRoomProjection,
+  PublicSeat,
+} from '@poker-with-friends/protocol';
 import { describe, expect, it } from 'vitest';
 import {
   betSuggestions,

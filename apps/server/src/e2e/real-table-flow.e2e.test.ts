@@ -1,7 +1,7 @@
 import { randomUUID } from 'node:crypto';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { admins, auditLogs, createDatabase, rooms, userAccounts } from '@poker/db';
+import { admins, auditLogs, createDatabase, rooms, userAccounts } from '@poker-with-friends/db';
 import type {
   AdminUserSummary,
   CommandResult,
@@ -14,7 +14,7 @@ import type {
   RoomSnapshotEnvelope,
   UserRoomSummary,
   UserSession,
-} from '@poker/protocol';
+} from '@poker-with-friends/protocol';
 import argon2 from 'argon2';
 import { eq } from 'drizzle-orm';
 import { io as createSocket, type Socket } from 'socket.io-client';

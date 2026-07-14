@@ -17,7 +17,7 @@ import {
   type HandRank,
   type PotSettlement,
   type SidePotBuild,
-} from '@poker/engine';
+} from '@poker-with-friends/engine';
 import type {
   CommandFailure,
   CommandResult,
@@ -32,7 +32,7 @@ import type {
   SeatClaimCommand,
   TablePosition,
   TopUpCommand,
-} from '@poker/protocol';
+} from '@poker-with-friends/protocol';
 import type { LoadedRoom, PlayerMutation, PokerRepository, RoomCommit } from '../repository.js';
 import { randomToken } from '../security/crypto.js';
 import { buildProjections, currentLiveDealerPlayerId } from './projection.js';

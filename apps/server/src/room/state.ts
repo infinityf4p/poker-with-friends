@@ -1,4 +1,4 @@
-import type { BettingRoundState, Card, SidePotBuild } from '@poker/engine';
+import type { BettingRoundState, Card, SidePotBuild } from '@poker-with-friends/engine';
 import type {
   HandPhase,
   LiveResultProposal,
@@ -8,7 +8,7 @@ import type {
   PublicRoomProjection,
   RoomSettings,
   RoomStatus,
-} from '@poker/protocol';
+} from '@poker-with-friends/protocol';
 
 export interface RuntimePlayer {
   id: string;

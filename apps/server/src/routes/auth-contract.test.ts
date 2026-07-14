@@ -6,7 +6,7 @@ import {
   createUserAccountSchema,
   joinRoomSchema,
   userLoginSchema,
-} from '@poker/protocol';
+} from '@poker-with-friends/protocol';
 import { describe, expect, it } from 'vitest';
 import { invalidRouteParameter, validationErrorBody } from './http.js';
 

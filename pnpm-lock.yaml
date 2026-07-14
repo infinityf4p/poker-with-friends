@@ -32,13 +32,13 @@ importers:
       '@fastify/static':
         specifier: ^9.1.1
         version: 9.3.0
-      '@poker/db':
+      '@poker-with-friends/db':
         specifier: workspace:*
         version: link:../../packages/db
-      '@poker/engine':
+      '@poker-with-friends/engine':
         specifier: workspace:*
         version: link:../../packages/poker-engine
-      '@poker/protocol':
+      '@poker-with-friends/protocol':
         specifier: workspace:*
         version: link:../../packages/protocol
       argon2:
@@ -78,7 +78,7 @@ importers:
 
   apps/web:
     dependencies:
-      '@poker/protocol':
+      '@poker-with-friends/protocol':
         specifier: workspace:*
         version: link:../../packages/protocol
       '@vitejs/plugin-react':

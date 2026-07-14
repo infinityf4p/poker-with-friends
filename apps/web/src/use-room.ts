@@ -5,7 +5,7 @@ import type {
   PrivatePlayerProjection,
   PublicRoomProjection,
   RoomSnapshotEnvelope,
-} from '@poker/protocol';
+} from '@poker-with-friends/protocol';
 import { api } from './api';
 
 export interface RoomConnection {

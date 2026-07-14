@@ -9,11 +9,11 @@ usage() {
 git_sha="${1:-}"
 public_origin="${2:-}"
 env_path="${3:-$PWD/.env}"
-image_repository="${APP_IMAGE_REPOSITORY:-poker-app}"
+image_repository="${APP_IMAGE_REPOSITORY:-poker-with-friends-app}"
 bind_address="${APP_BIND_ADDRESS:-127.0.0.1}"
 bind_port="${APP_BIND_PORT:-3000}"
-project_name="${COMPOSE_PROJECT_NAME:-poker-infinity}"
-postgres_container="${POSTGRES_CONTAINER_NAME:-poker-postgres}"
+project_name="${COMPOSE_PROJECT_NAME:-poker-with-friends}"
+postgres_container="${POSTGRES_CONTAINER_NAME:-poker-with-friends-postgres}"
 postgres_data_path="${POSTGRES_DATA_PATH:-}"
 
 [[ -n "$git_sha" && -n "$public_origin" ]] || { usage; exit 64; }

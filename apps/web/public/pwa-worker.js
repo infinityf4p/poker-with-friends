@@ -1,4 +1,4 @@
-const CACHE_NAME = 'friends-table-shell-v2';
+const CACHE_NAME = 'poker-with-friends-shell-v1';
 const SHELL = ['/', '/index.html', '/manifest.webmanifest', '/icon.svg'];
 
 function isCacheableResponse(request, response) {

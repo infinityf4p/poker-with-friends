@@ -1,6 +1,6 @@
 {
-  "name": "poker-infinity",
-  "version": "0.3.3",
+  "name": "poker-with-friends",
+  "version": "0.4.0",
   "private": true,
   "type": "module",
   "packageManager": "pnpm@10.13.1",
@@ -8,16 +8,16 @@
     "node": ">=24"
   },
   "scripts": {
-    "build:packages": "pnpm --filter @poker/protocol --filter @poker/engine --filter @poker/db build",
+    "build:packages": "pnpm --filter @poker-with-friends/protocol --filter @poker-with-friends/engine --filter @poker-with-friends/db build",
     "predev": "pnpm build:packages",
-    "dev": "pnpm --parallel --filter @poker/server --filter @poker/web dev",
+    "dev": "pnpm --parallel --filter @poker-with-friends/server --filter @poker-with-friends/web dev",
     "build": "pnpm -r --if-present build",
     "typecheck": "pnpm build:packages && pnpm -r --if-present typecheck",
     "test": "pnpm build:packages && pnpm -r --if-present test",
-    "test:e2e": "pnpm build:packages && pnpm --filter @poker/server test:e2e",
-    "test:property": "pnpm --filter @poker/engine test:property",
-    "db:generate": "pnpm --filter @poker/db db:generate",
-    "db:migrate": "pnpm --filter @poker/db db:migrate",
+    "test:e2e": "pnpm build:packages && pnpm --filter @poker-with-friends/server test:e2e",
+    "test:property": "pnpm --filter @poker-with-friends/engine test:property",
+    "db:generate": "pnpm --filter @poker-with-friends/db db:generate",
+    "db:migrate": "pnpm --filter @poker-with-friends/db db:migrate",
     "format:check": "prettier --check .",
     "format": "prettier --write ."
   },

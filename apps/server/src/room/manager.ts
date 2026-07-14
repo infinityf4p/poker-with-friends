@@ -9,7 +9,7 @@ import type {
   RoomSnapshotEnvelope,
   SeatClaimCommand,
   TopUpCommand,
-} from '@poker/protocol';
+} from '@poker-with-friends/protocol';
 import type { PokerRepository } from '../repository.js';
 import { RoomActor, type AdminPlayerOperationResult } from './actor.js';
 import type { ProjectionBundle } from './state.js';

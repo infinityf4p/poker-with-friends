@@ -1,6 +1,6 @@
 # Contributing
 
-Thank you for improving Poker Infinity. Keep changes focused, reviewable, and safe for a public repository.
+Thank you for improving Poker with Friends. Keep changes focused, reviewable, and safe for a public repository.
 
 ## Development
 

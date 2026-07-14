@@ -143,9 +143,9 @@ export async function buildApp(deps: BuildAppDependencies): Promise<PokerApp> {
     });
   } else {
     app.get('/', async () => ({
-      name: 'Poker Infinity API',
+      name: 'Poker with Friends API',
       build: deps.config.APP_BUILD_SHA,
-      message: 'Web build not found; run pnpm --filter @poker/web build',
+      message: 'Web build not found; run pnpm --filter @poker-with-friends/web build',
     }));
   }
 

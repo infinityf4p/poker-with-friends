@@ -27,14 +27,14 @@ RUN pnpm build
 # workspace dependencies. The web build is copied separately and served by
 # Fastify through WEB_DIST_DIR.
 RUN --mount=type=cache,id=pnpm-store,target=/pnpm/store \
-    pnpm --filter @poker/server deploy --prod --legacy /opt/poker/server \
+    pnpm --filter @poker-with-friends/server deploy --prod --legacy /opt/poker/server \
     && install -d /opt/poker/web \
     && cp -a apps/web/dist /opt/poker/web/dist
 
 FROM node:${NODE_VERSION}-bookworm-slim AS runtime
 
 ARG APP_BUILD_SHA=unknown
-LABEL org.opencontainers.image.title="Poker Infinity" \
+LABEL org.opencontainers.image.title="Poker with Friends" \
       org.opencontainers.image.revision="${APP_BUILD_SHA}"
 
 ENV NODE_ENV=production \

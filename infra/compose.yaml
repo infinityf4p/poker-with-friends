@@ -1,7 +1,7 @@
-name: ${COMPOSE_PROJECT_NAME:-poker-infinity}
+name: ${COMPOSE_PROJECT_NAME:-poker-with-friends}
 
 x-app-common: &app-common
-  image: ${APP_IMAGE_REPOSITORY:-poker-app}:${APP_IMAGE_TAG:-latest}
+  image: ${APP_IMAGE_REPOSITORY:-poker-with-friends-app}:${APP_IMAGE_TAG:-latest}
   build:
     context: ..
     dockerfile: infra/Dockerfile
@@ -41,7 +41,7 @@ x-app-common: &app-common
 services:
   postgres:
     image: ${POSTGRES_IMAGE:-postgres:18-alpine}
-    container_name: ${POSTGRES_CONTAINER_NAME:-poker-postgres}
+    container_name: ${POSTGRES_CONTAINER_NAME:-poker-with-friends-postgres}
     environment:
       POSTGRES_USER: ${POSTGRES_USER:?POSTGRES_USER must be set}
       POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?POSTGRES_PASSWORD must be set}
@@ -73,7 +73,7 @@ services:
     restart: 'no'
     command:
       - node
-      - node_modules/@poker/db/dist/migrate.js
+      - node_modules/@poker-with-friends/db/dist/migrate.js
     depends_on:
       postgres:
         condition: service_healthy

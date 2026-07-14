@@ -1,5 +1,5 @@
 [Unit]
-Description=Prune Poker Infinity PostgreSQL backups daily
+Description=Prune Poker with Friends PostgreSQL backups daily
 
 [Timer]
 OnCalendar=*-*-* 03:30:00 UTC

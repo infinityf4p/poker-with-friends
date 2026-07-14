@@ -15,7 +15,7 @@ import {
   joinRoomSchema,
   resetUserPasswordSchema,
   userLoginSchema,
-} from '@poker/protocol';
+} from '@poker-with-friends/protocol';
 import type { AppConfig } from '../config.js';
 import type { AuthenticatedAdmin, AuthenticatedUser, PokerRepository } from '../repository.js';
 import type { RoomManager } from '../room/manager.js';

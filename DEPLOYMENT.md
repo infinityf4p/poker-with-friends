@@ -1,4 +1,4 @@
-# Poker Infinity production deployment
+# Poker with Friends production deployment
 
 The canonical production definition is `infra/compose.yaml`. It runs the app and an independent PostgreSQL service, keeps the database on an internal Docker network, and publishes only the configured application address and port.
 
@@ -30,7 +30,7 @@ openssl rand -base64 32 # SNAPSHOT_KEY: exactly 32 bytes before Base64 encoding
 
 `DATABASE_URL` uses host `postgres`, because the app connects over the Compose network. URL-encode reserved characters in its password. `POSTGRES_PASSWORD` contains the corresponding raw password.
 
-Generate `ADMIN_PASSWORD_HASH` with `pnpm --filter @poker/server admin:hash`, or use the production environment generator in section 4. Store only the resulting Argon2id hash in `infra/.env`, never the plaintext password. Keep the value inside single quotes so Compose does not treat the hash's `$` characters as interpolation.
+Generate `ADMIN_PASSWORD_HASH` with `pnpm --filter @poker-with-friends/server admin:hash`, or use the production environment generator in section 4. Store only the resulting Argon2id hash in `infra/.env`, never the plaintext password. Keep the value inside single quotes so Compose does not treat the hash's `$` characters as interpolation.
 
 Review and start the stack:
 
@@ -61,7 +61,7 @@ export APP_UPSTREAM=127.0.0.1:3000
 export TLS_CERTIFICATE=/etc/letsencrypt/live/poker.example.com/fullchain.pem
 export TLS_CERTIFICATE_KEY=/etc/letsencrypt/live/poker.example.com/privkey.pem
 envsubst '${SERVER_NAME} ${APP_UPSTREAM} ${TLS_CERTIFICATE} ${TLS_CERTIFICATE_KEY}' \
-  < nginx/site.conf.template > /tmp/poker-infinity.conf
+  < nginx/site.conf.template > /tmp/poker-with-friends.conf
 ```
 
 Validate the rendered file with `nginx -t` before installing or reloading it. Certificate issuance and the final Nginx destination are host- and distribution-specific.
@@ -76,7 +76,7 @@ Build the exact revision first:
 cd infra
 sha="$(git -C .. rev-parse HEAD)"
 docker build --pull --build-arg APP_BUILD_SHA="$sha" \
-  -t "poker-app:$sha" -f Dockerfile ..
+  -t "poker-with-friends-app:$sha" -f Dockerfile ..
 sudo ./scripts/init-production-env.sh \
   "$sha" https://poker.example.com "$PWD/.env"
 ```
@@ -92,21 +92,21 @@ The supplied systemd sandbox permits writes only to that default destination. If
 Install only the PostgreSQL backup files:
 
 ```bash
-sudo install -d -m 0755 /usr/local/libexec/poker-infinity
+sudo install -d -m 0755 /usr/local/libexec/poker-with-friends
 sudo install -m 0755 scripts/lib.sh scripts/pg-backup.sh \
-  scripts/pg-backup-retention.sh /usr/local/libexec/poker-infinity/
-sudo install -d -m 0700 /etc/poker-infinity /var/backups/poker/postgres
+  scripts/pg-backup-retention.sh /usr/local/libexec/poker-with-friends/
+sudo install -d -m 0700 /etc/poker-with-friends /var/backups/poker/postgres
 sudo install -m 0600 systemd/pg-backup.env.example \
-  /etc/poker-infinity/pg-backup.env
+  /etc/poker-with-friends/pg-backup.env
 sudo install -m 0644 systemd/poker-pg-*.service \
   systemd/poker-pg-*.timer /etc/systemd/system/
 sudo systemctl daemon-reload
 ```
 
-If `POSTGRES_CONTAINER_NAME` was changed, update `PG_CONTAINER` in `/etc/poker-infinity/pg-backup.env`. Preview, create one backup, inspect its log, and only then enable the timers:
+If `POSTGRES_CONTAINER_NAME` was changed, update `PG_CONTAINER` in `/etc/poker-with-friends/pg-backup.env`. Preview, create one backup, inspect its log, and only then enable the timers:
 
 ```bash
-sudo /usr/local/libexec/poker-infinity/pg-backup.sh --dry-run
+sudo /usr/local/libexec/poker-with-friends/pg-backup.sh --dry-run
 sudo systemctl start poker-pg-backup.service
 sudo journalctl -u poker-pg-backup.service --since today
 sudo systemctl enable --now poker-pg-backup.timer poker-pg-retention.timer
@@ -115,7 +115,7 @@ sudo systemctl enable --now poker-pg-backup.timer poker-pg-retention.timer
 Retention refuses to delete anything unless the directory contains the marker created by the backup script. Preview it with:
 
 ```bash
-sudo /usr/local/libexec/poker-infinity/pg-backup-retention.sh --dry-run
+sudo /usr/local/libexec/poker-with-friends/pg-backup-retention.sh --dry-run
 ```
 
 A backup is not proven until its checksum is verified and it is restored into an isolated disposable database.
@@ -124,7 +124,7 @@ A backup is not proven until its checksum is verified and it is restored into an
 
 ### v0.1 to v0.2 identity migration
 
-v0.2 replaces disposable player sessions with permanent accounts, so this upgrade requires an empty Poker Infinity database. Stop the app and every process that can write to the database, verify a final backup, and then either recreate the dedicated database or reset both application-owned schemas:
+v0.2 replaces disposable player sessions with permanent accounts, so this upgrade requires an empty Poker with Friends database. Stop the app and every process that can write to the database, verify a final backup, and then either recreate the dedicated database or reset both application-owned schemas:
 
 ```sql
 DROP SCHEMA IF EXISTS public CASCADE;
@@ -132,7 +132,7 @@ DROP SCHEMA IF EXISTS drizzle CASCADE;
 CREATE SCHEMA public;
 ```
 
-Run this only against a database dedicated to Poker Infinity and only when permanent deletion was explicitly approved. Dropping `public` alone is insufficient because `drizzle.__drizzle_migrations` would retain the old migration history and cause the migration runner to skip required tables.
+Run this only against a database dedicated to Poker with Friends and only when permanent deletion was explicitly approved. Dropping `public` alone is insufficient because `drizzle.__drizzle_migrations` would retain the old migration history and cause the migration runner to skip required tables.
 
 After the reset, continue with the build and migration commands below.
 

@@ -7,7 +7,7 @@ import type {
   PlayerAction,
   PublicRoomProjection,
   RoomMode,
-} from '@poker/protocol';
+} from '@poker-with-friends/protocol';
 import {
   api,
   type AdminSession,
@@ -69,8 +69,8 @@ function Brand({ compact = false }: { compact?: boolean }) {
       </span>
       {!compact && (
         <span>
-          <strong>同桌</strong>
-          <small>FRIENDS TABLE</small>
+          <strong>Poker with Friends</strong>
+          <small>PLAY TOGETHER</small>
         </span>
       )}
     </button>

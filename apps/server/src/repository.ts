@@ -19,7 +19,7 @@ import {
   type PlayerRow,
   type PokerDatabase,
   type RoomRow,
-} from '@poker/db';
+} from '@poker-with-friends/db';
 import type {
   AdminRoomSummary,
   AdminRoomPlayerSummary,
@@ -32,7 +32,7 @@ import type {
   RoomStatus,
   UserRoomSummary,
   UserSession,
-} from '@poker/protocol';
+} from '@poker-with-friends/protocol';
 import { and, asc, desc, eq, gt, inArray, isNull, lt, ne, sql } from 'drizzle-orm';
 import type { AppConfig } from './config.js';
 import {
