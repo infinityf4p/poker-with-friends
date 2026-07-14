@@ -26,7 +26,6 @@ import {
   betSuggestions,
   cardRankLabel,
   formatPoints,
-  roomMessage,
   historyActions,
   historySettlement,
   naturalAction,
@@ -433,7 +432,6 @@ function LobbyRoomCard({
               <Icon name="door" size={15} />
               <span>
                 <strong>{full ? '牌桌已满' : '可直接加入'}</strong>
-                <small>{room.mode === 'LIVE' ? '实体牌＋数字筹码' : '自动发牌与结算'}</small>
               </span>
             </>
           )}
@@ -575,7 +573,7 @@ function PasswordDialog({
           />
         </label>
         <label className="field">
-          <span>新密码（至少 12 位）</span>
+          <span>新密码</span>
           <input
             type="password"
             minLength={12}
@@ -1050,14 +1048,10 @@ function CreateAccountDialog({
             autoComplete="off"
             pattern="[A-Za-z0-9_.-]{3,64}"
             maxLength={64}
-            aria-describedby="create-account-username-help"
             aria-invalid={username.length > 0 && !usernameValid}
             required
             autoFocus
           />
-          <small id="create-account-username-help" className="field-help">
-            3–64 位，可使用英文、数字、点、下划线和短横线。
-          </small>
           {username.length > 0 && !usernameValid && (
             <small className="field-error" role="alert">
               登录账号格式不符合要求。
@@ -1065,17 +1059,12 @@ function CreateAccountDialog({
           )}
         </label>
         <label className="field">
-          <span>显示名称</span>
+          <span>显示名称（可选）</span>
           <input
             value={displayName}
             onChange={(event) => setDisplayName(event.target.value)}
             maxLength={20}
-            placeholder="未填写时使用账号名"
-            aria-describedby="create-account-display-help"
           />
-          <small id="create-account-display-help" className="field-help">
-            最多 20 个字符；账号超过 20 位时必须填写。
-          </small>
           {!displayNameValid && (
             <small className="field-error" role="alert">
               请填写不超过 20 个字符的显示名称。
@@ -1091,22 +1080,15 @@ function CreateAccountDialog({
             onChange={(event) => setPassword(event.target.value)}
             autoComplete="new-password"
             maxLength={256}
-            aria-describedby="create-account-password-help"
             aria-invalid={password.length > 0 && !passwordValid}
             required
           />
-          <small id="create-account-password-help" className="field-help">
-            至少 12 位；当前 {password.length} 位。
-          </small>
           {password.length > 0 && !passwordValid && (
             <small className="field-error" role="alert">
               临时密码至少需要 12 位。
             </small>
           )}
         </label>
-        <p className="sheet-safety">
-          <Icon name="key" size={15} /> 请单独发送临时密码。
-        </p>
         <button
           className="primary-button"
           disabled={pending || !usernameValid || !displayNameValid || !passwordValid}
@@ -1132,7 +1114,6 @@ function ResetPasswordDialog({
   const [error, setError] = useState<string | null>(null);
   return (
     <Modal title={`重置 ${user.displayName} 的密码`} onClose={onClose}>
-      <p className="sheet-safety">重置后现有会话失效，下次登录必须修改密码。</p>
       {error && <ErrorBox>{error}</ErrorBox>}
       <form
         className="sheet-form"
@@ -1284,7 +1265,6 @@ function RoomPlayersDialog({
             value={nickname}
             onChange={(event) => setNickname(event.target.value)}
             maxLength={20}
-            placeholder="默认使用显示名称"
           />
         </label>
         <button className="primary-button" disabled={!userId || pending}>
@@ -1495,7 +1475,6 @@ function CreateRoomDialog({
                 <Icon name={item === 'ONLINE' ? 'cards' : 'table'} size={23} />
               </b>
               <span>{item === 'ONLINE' ? '线上牌桌' : '线下牌桌'}</span>
-              <small>{item === 'ONLINE' ? '自动发牌与结算' : '实体牌＋数字筹码'}</small>
             </button>
           ))}
         </div>
@@ -1547,7 +1526,6 @@ function CreateRoomDialog({
             />
           </label>
         </div>
-        <p className="sheet-safety">开始后不可修改规则或模式。</p>
         <button className="primary-button" disabled={!valid || pending}>
           {pending ? '正在创建…' : '创建牌桌'}
         </button>
@@ -1599,10 +1577,22 @@ function JoinPage({ token }: { token: string }) {
         </div>
         <ModeBadge mode={preview.mode} />
         <h1>{preview.name}</h1>
-        <p className="invite-subtitle">
-          当前 {preview.playerCount}/6 人 · 盲注 {preview.settings.smallBlind}/
-          {preview.settings.bigBlind} · 起始 {preview.settings.startingStack}
-        </p>
+        <dl className="invite-stats">
+          <div>
+            <dt>人数</dt>
+            <dd>{preview.playerCount}/6</dd>
+          </div>
+          <div>
+            <dt>盲注</dt>
+            <dd>
+              {preview.settings.smallBlind}/{preview.settings.bigBlind}
+            </dd>
+          </div>
+          <div>
+            <dt>起始筹码</dt>
+            <dd>{preview.settings.startingStack}</dd>
+          </div>
+        </dl>
         <div className="invite-seats">
           {Array.from({ length: 6 }, (_, index) => preview.nicknames[index] ?? null).map(
             (name, index) => (
@@ -1911,7 +1901,6 @@ function RoomPage({ roomId }: { roomId: string }) {
           <div className="table-mode-row">
             <ModeBadge mode={room.mode} />
             <span>{room.phase ? (phaseLabel[room.phase] ?? room.phase) : '等待开始'}</span>
-            <span className="fair-chip">数字筹码</span>
           </div>
           <PokerTable
             room={enhancedRoom}
@@ -1921,10 +1910,6 @@ function RoomPage({ roomId }: { roomId: string }) {
             claimingSeat={claimingSeat}
             onClaim={(seat) => void claimSeat(seat)}
           />
-          <div className="room-message">
-            <span>{roomMessage(room.message)}</span>
-            {room.nextHandAt && <b>{seconds} 秒后进入下一阶段</b>}
-          </div>
           <RecentActions actions={enhancedRoom.recentActions ?? []} />
           {me && (
             <div className="quick-actions real-quick-actions">
@@ -2098,7 +2083,6 @@ function PokerTable({
               <span className="live-center-icon">
                 <Icon name="table" size={27} />
               </span>
-              <small>现场牌面为准</small>
               <strong>
                 {room.pendingLiveStreet
                   ? `等待确认${phaseLabel[room.pendingLiveStreet] ?? room.pendingLiveStreet}`
@@ -2246,14 +2230,7 @@ function OnlineActions({
   const [amountInput, setAmountInput] = useState(String(minimum));
   useEffect(() => setAmountInput(String(minimum)), [minimum, room.serverSeq]);
   if (room.status !== 'ACTIVE') return <WaitingPanel icon="check" title="等待下一手" />;
-  if (!isMyTurn || !prompt)
-    return (
-      <WaitingPanel
-        icon="clock"
-        title="等待其他玩家行动"
-        text={roomMessage(room.message) || undefined}
-      />
-    );
+  if (!isMyTurn || !prompt) return <WaitingPanel icon="clock" title="等待其他玩家行动" />;
   const actions = new Set(prompt.legalActions);
   const wagerAction: PlayerAction | null = actions.has('RAISE_TO')
     ? 'RAISE_TO'
@@ -2296,14 +2273,11 @@ function OnlineActions({
       <div className="call-summary">
         <span>需跟注</span>
         <strong>{formatPoints(prompt.callAmount)}</strong>
-        <small>超时：自动过牌或弃牌</small>
       </div>
       {wagerAction && minimum <= prompt.maxTo && (
         <div className="raise-control">
           <div>
-            <label htmlFor="raise">
-              {wagerAction === 'BET_TO' ? '下注到' : '加注到'}（本轮总投入）
-            </label>
+            <label htmlFor="raise">{wagerAction === 'BET_TO' ? '下注到' : '加注到'}</label>
             <label className="amount-input">
               <Icon name="chip" size={15} />
               <input
@@ -2316,7 +2290,7 @@ function OnlineActions({
                 onChange={(event) => setAmountInput(event.target.value)}
                 aria-label="精确输入下注后总投入"
                 aria-invalid={!amountValid}
-                aria-describedby="desktop-wager-help"
+                aria-describedby={amountValid ? undefined : 'desktop-wager-error'}
               />
             </label>
           </div>
@@ -2347,15 +2321,11 @@ function OnlineActions({
             <span>最小 {formatPoints(minimum)}</span>
             <span>最大 {formatPoints(prompt.maxTo)}</span>
           </div>
-          <small
-            id="desktop-wager-help"
-            className={amountValid ? 'field-help' : 'field-error'}
-            role={amountValid ? undefined : 'alert'}
-          >
-            {amountValid
-              ? '金额为本轮累计投入。'
-              : `请输入 ${formatPoints(minimum)} 至 ${formatPoints(prompt.maxTo)} 之间的整数。`}
-          </small>
+          {!amountValid && (
+            <small id="desktop-wager-error" className="field-error" role="alert">
+              请输入 {formatPoints(minimum)} 至 {formatPoints(prompt.maxTo)} 之间的整数。
+            </small>
+          )}
         </div>
       )}
       <div className="poker-actions real-poker-actions">
@@ -2394,22 +2364,13 @@ function OnlineActions({
   );
 }
 
-function WaitingPanel({
-  icon = 'spade',
-  title,
-  text,
-}: {
-  icon?: IconName;
-  title: string;
-  text?: string;
-}) {
+function WaitingPanel({ icon = 'spade', title }: { icon?: IconName; title: string }) {
   return (
     <section className="operation-panel waiting-panel-real">
       <span className="waiting-symbol">
         <Icon name={icon} size={27} />
       </span>
       <h2>{title}</h2>
-      {text && <p>{text}</p>}
     </section>
   );
 }
@@ -2430,7 +2391,6 @@ function ReadyConfirmation({
   );
   const ready = room.readyCount ?? eligible.filter((seat) => seat.ready).length;
   const required = room.requiredReadyCount ?? eligible.length;
-  const waiting = eligible.filter((seat) => !seat.ready);
   const enoughPlayers = eligible.length >= 2;
   return (
     <section className="operation-panel ready-panel">
@@ -2464,11 +2424,6 @@ function ReadyConfirmation({
           </li>
         ))}
       </ul>
-      {!enoughPlayers ? (
-        <p className="waiting-names">至少需要 2 名玩家</p>
-      ) : waiting.length > 0 ? (
-        <p className="waiting-names">等待 {waiting.map((seat) => seat.nickname).join('、')} 准备</p>
-      ) : null}
       {mySeat ? (
         <button
           className="primary-button ready-button"
@@ -2483,9 +2438,7 @@ function ReadyConfirmation({
           <Icon name="check" size={18} />{' '}
           {!enoughPlayers ? '等待玩家' : mySeat.ready ? '已准备' : '准备下一手'}
         </button>
-      ) : (
-        <p className="sheet-safety">请先选择座位</p>
-      )}
+      ) : null}
     </section>
   );
 }
@@ -2592,7 +2545,7 @@ function MobileActionDock({
       </div>
       {raiseOpen && wagerAction && (
         <Modal
-          title={wagerAction === 'BET_TO' ? '下注到（本轮总投入）' : '加注到（本轮总投入）'}
+          title={wagerAction === 'BET_TO' ? '下注到' : '加注到'}
           onClose={() => setRaiseOpen(false)}
         >
           <div className="mobile-wager-sheet">
@@ -2608,7 +2561,7 @@ function MobileActionDock({
                 onChange={(event) => setAmountInput(event.target.value)}
                 aria-label="精确输入下注后总投入"
                 aria-invalid={!valid}
-                aria-describedby="mobile-wager-help"
+                aria-describedby={valid ? undefined : 'mobile-wager-error'}
               />
             </label>
             <div className="bet-suggestions">
@@ -2637,15 +2590,11 @@ function MobileActionDock({
               <span>最小 {formatPoints(minimum)}</span>
               <span>最大 {formatPoints(prompt.maxTo)}</span>
             </div>
-            <small
-              id="mobile-wager-help"
-              className={valid ? 'field-help' : 'field-error'}
-              role={valid ? undefined : 'alert'}
-            >
-              {valid
-                ? '金额为本轮累计投入。'
-                : `请输入 ${formatPoints(minimum)} 至 ${formatPoints(prompt.maxTo)} 之间的整数。`}
-            </small>
+            {!valid && (
+              <small id="mobile-wager-error" className="field-error" role="alert">
+                请输入 {formatPoints(minimum)} 至 {formatPoints(prompt.maxTo)} 之间的整数。
+              </small>
+            )}
             <button
               className="primary-button"
               disabled={!valid || busy}
@@ -2799,10 +2748,7 @@ function LiveActions({
         </article>
       )}
       {!room.pendingLiveStreet && room.phase !== 'SHOWDOWN' && !proposal && (
-        <WaitingPanel
-          title={room.status === 'ACTIVE' ? '现场手牌进行中' : '等待玩家准备'}
-          text={roomMessage(room.message) || undefined}
-        />
+        <WaitingPanel title={room.status === 'ACTIVE' ? '现场手牌进行中' : '等待玩家准备'} />
       )}
     </section>
   );
@@ -2856,7 +2802,6 @@ function LiveWinnerDialog({
           </fieldset>
         ))}
       </div>
-      <p className="sheet-safety">可勾选多名赢家以平分底池；奇数筹码按按钮位后顺时针分配。</p>
       <button
         className="primary-button"
         disabled={pending || room.pots.some((pot) => !winners[pot.id]?.length)}

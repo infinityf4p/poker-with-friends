@@ -8,7 +8,6 @@ import { describe, expect, it } from 'vitest';
 import {
   betSuggestions,
   cardRankLabel,
-  roomMessage,
   historyActions,
   historySettlement,
   naturalAction,
@@ -79,7 +78,6 @@ function room(overrides: Partial<PublicRoomProjection> = {}): PublicRoomProjecti
       raiseDepth: 0,
     },
     liveResultProposal: null,
-    message: null,
     nextHandAt: null,
     readyCount: 0,
     requiredReadyCount: 2,
@@ -94,16 +92,6 @@ describe('poker UI helpers', () => {
     const tens: Card[] = ['Ts', 'Th', 'Td', 'Tc'];
     expect(tens.map(cardRankLabel)).toEqual(['10', '10', '10', '10']);
     expect(cardRankLabel('As')).toBe('A');
-  });
-
-  it('keeps persisted room messages friendly after copy updates', () => {
-    expect(roomMessage('在线阵容发生变化，请所有在座玩家重新确认下一手')).toBe(
-      '牌桌成员已变化，请重新准备',
-    );
-    expect(roomMessage('小明 已被管理员移出牌桌，请重新确认下一手')).toBe(
-      '小明 已离开牌桌，请重新准备',
-    );
-    expect(roomMessage('下一位请行动')).toBe('下一位请行动');
   });
 
   it('offers open, 3-bet, and 4-bet targets from server betting context', () => {

@@ -371,6 +371,7 @@ describeWithDatabase('real HTTP + Socket.IO three-player table flow', () => {
     for (const [seat, player] of players.entries()) {
       await command(player.playerId, 'seat.claim', { seat });
     }
+    expect(currentRoom()).not.toHaveProperty('message');
     expect(currentRoom().requiredReadyCount).toBe(3);
 
     const staleSeq = currentRoom().serverSeq;

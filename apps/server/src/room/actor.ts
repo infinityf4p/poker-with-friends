@@ -128,9 +128,15 @@ function asRuntimeState(loaded: LoadedRoom): RuntimeRoomState {
     stored.roomId === loaded.room.id &&
     Array.isArray(stored.players)
   ) {
+    const runtimeState = {
+      ...(stored as RuntimeRoomState & { message?: string | null }),
+    };
+    // v0.3.x/v0.4.0 snapshots contained presentation copy in the encrypted state.
+    // Drop it while loading so the next commit permanently normalizes the snapshot.
+    delete runtimeState.message;
     const rowsById = new Map(loaded.players.map((player) => [player.id, player]));
     return {
-      ...(stored as RuntimeRoomState),
+      ...runtimeState,
       // Socket presence cannot survive a process restart.
       players: (stored.players as RuntimePlayer[]).map((player) => ({
         ...player,
@@ -175,7 +181,6 @@ function asRuntimeState(loaded: LoadedRoom): RuntimeRoomState {
     })),
     hand: null,
     nextHandAt: null,
-    message: loaded.room.status === 'ARCHIVED' ? '牌桌已归档' : '等待玩家入座并准备',
     createdAt: publicSnapshot.createdAt ?? loaded.room.createdAt.toISOString(),
     updatedAt: nowIso(),
   };
@@ -246,17 +251,6 @@ function actionFromInput(input: ActionInput): BettingAction {
       }
       return { type: input.action, amountTo: input.amountTo };
   }
-}
-
-function actionLabel(action: ActionInput['action']): string {
-  return {
-    FOLD: '弃牌',
-    CHECK: '过牌',
-    CALL: '跟注',
-    BET_TO: '下注',
-    RAISE_TO: '加注',
-    ALL_IN: '全下',
-  }[action];
 }
 
 function oddChipPlayerOrder(state: RuntimeRoomState, hand: RuntimeHand): string[] {
@@ -411,7 +405,6 @@ function finishSettledHand(
       return player.id;
     });
   resetReadyConfirmations(state);
-  state.message = `第 ${hand.number} 手已结算，请所有在线在座玩家确认下一手`;
   return {
     eventType: 'HAND_SETTLED',
     publicPayload: { handNumber: hand.number, result, kickedPlayerIds },
@@ -633,7 +626,6 @@ function beginHand(state: RuntimeRoomState): MutationExtras {
   state.hand = hand;
   state.status = 'ACTIVE';
   state.nextHandAt = null;
-  state.message = `第 ${hand.number} 手开始`;
   const ledgerMutations: NonNullable<RoomCommit['ledgerMutations']> = posted
     .filter((entry) => entry.amount > 0)
     .map((entry) => ({
@@ -717,7 +709,6 @@ function advanceCompletedRound(state: RuntimeRoomState, base?: MutationExtras): 
       hand.sidePotBuild = buildCurrentPots(hand);
       hand.turnToken = null;
       hand.actionDeadlineAt = null;
-      state.message = '请发牌确认人提交各底池赢家';
       const extras: MutationExtras = {
         eventType: 'LIVE_SHOWDOWN_READY',
         handUpdate: { id: hand.id, phase: 'SHOWDOWN' },
@@ -728,7 +719,6 @@ function advanceCompletedRound(state: RuntimeRoomState, base?: MutationExtras): 
       hand.phase === 'PREFLOP' ? 'FLOP' : hand.phase === 'FLOP' ? 'TURN' : 'RIVER';
     hand.turnToken = null;
     hand.actionDeadlineAt = null;
-    state.message = `等待发牌确认人确认已发${hand.pendingLiveStreet}`;
     const extras: MutationExtras = {
       eventType: 'LIVE_STREET_AWAITING_DEAL',
       publicPayload: { street: hand.pendingLiveStreet },
@@ -743,7 +733,6 @@ function advanceCompletedRound(state: RuntimeRoomState, base?: MutationExtras): 
     if (!hand.betting.complete) {
       hand.turnToken = randomToken(18);
       hand.actionDeadlineAt = nextActionDeadline(state);
-      state.message = `${street} 下注轮`;
       const extras: MutationExtras = {
         eventType: 'STREET_DEALT',
         publicPayload: { street, communityCards: hand.communityCards },
@@ -1059,9 +1048,7 @@ export class RoomActor {
         });
       }
       if (changed) {
-        const hadReadyConfirmation = this.state.players.some((player) => player.ready);
         resetReadyConfirmations(this.state);
-        this.state.message = hadReadyConfirmation ? '牌桌成员已变化，请重新准备' : null;
         await this.commit({ eventType: 'PLAYER_JOINED' });
       }
     });
@@ -1073,9 +1060,7 @@ export class RoomActor {
       if (!player || player.connected === connected || this.state.status === 'ARCHIVED') return;
       player.connected = connected;
       if (this.state.status !== 'ACTIVE') {
-        const hadReadyConfirmation = this.state.players.some((candidate) => candidate.ready);
         resetReadyConfirmations(this.state);
-        if (hadReadyConfirmation) this.state.message = '牌桌成员已变化，请重新准备';
       } else if (!connected) {
         player.ready = false;
       }
@@ -1103,9 +1088,7 @@ export class RoomActor {
         throw new RoomRuleError('CONFLICT', '当前手牌结束前不能换座');
       }
       player.seat = command.payload.seat;
-      const hadReadyConfirmation = this.state.players.some((candidate) => candidate.ready);
       resetReadyConfirmations(this.state);
-      if (hadReadyConfirmation) this.state.message = '牌桌成员已变化，请重新准备';
       return { eventType: 'SEAT_CLAIMED', publicPayload: { playerId, seat: command.payload.seat } };
     });
   }
@@ -1124,7 +1107,6 @@ export class RoomActor {
       if (everyoneReady(this.state)) return beginHand(this.state);
       const eligible = eligiblePlayers(this.state);
       const readyCount = eligible.filter((candidate) => candidate.ready).length;
-      this.state.message = `下一手确认 ${readyCount}/${eligible.length}`;
       return {
         eventType: 'PLAYER_READY',
         publicPayload: { playerId, readyCount, requiredReadyCount: eligible.length },
@@ -1137,7 +1119,6 @@ export class RoomActor {
       const player = this.state.players.find((candidate) => candidate.id === playerId)!;
       resetReadyConfirmations(this.state);
       player.sittingOut = true;
-      this.state.message = '牌桌成员已变化，请重新准备';
       return {
         eventType: 'PLAYER_SITTING_OUT',
         publicPayload: { playerId, confirmationsReset: true },
@@ -1160,7 +1141,6 @@ export class RoomActor {
       const before = player.stack;
       player.stack = this.state.settings.stackCap;
       resetReadyConfirmations(this.state);
-      this.state.message = '筹码已变化，请重新准备';
       return {
         eventType: 'STACK_TOPPED_UP',
         publicPayload: { playerId, targetStack: player.stack, confirmationsReset: true },
@@ -1214,7 +1194,6 @@ export class RoomActor {
       const delta = after.stack - before.stack;
       hand.turnToken = hand.betting.complete ? null : randomToken(18);
       hand.actionDeadlineAt = hand.betting.complete ? null : nextActionDeadline(this.state);
-      this.state.message = `${actingPlayer.nickname} ${actionLabel(command.payload.action)}`;
       let extras: MutationExtras = {
         eventType: 'PLAYER_ACTED',
         publicPayload: {
@@ -1272,7 +1251,6 @@ export class RoomActor {
       resetBettingForStreet(this.state, hand);
       hand.turnToken = hand.betting.complete ? null : randomToken(18);
       hand.actionDeadlineAt = hand.betting.complete ? null : nextActionDeadline(this.state);
-      this.state.message = `${street} 已发牌`;
       let extras: MutationExtras = {
         eventType: 'LIVE_STREET_DEALT',
         publicPayload: { street },
@@ -1323,9 +1301,6 @@ export class RoomActor {
         superseded: false,
       };
       hand.liveProposal = proposal;
-      this.state.message = hand.liveHadObjection
-        ? '新结果已提交，等待所有有资格玩家确认'
-        : '结果已提交，10 秒无异议后自动结算';
       return {
         eventType: 'LIVE_RESULT_PROPOSED',
         publicPayload: { proposalId: proposal.id, winnersByPot },
@@ -1366,7 +1341,6 @@ export class RoomActor {
       if (!proposal.objectedByPlayerIds.includes(playerId))
         proposal.objectedByPlayerIds.push(playerId);
       hand.liveHadObjection = true;
-      this.state.message = '结果有异议，请发牌确认人提交新方案';
       return {
         eventType: 'LIVE_RESULT_OBJECTED',
         publicPayload: { proposalId: proposal.id, playerId },
@@ -1404,7 +1378,6 @@ export class RoomActor {
         settled.liveConfirmation = confirmation;
         return settled;
       }
-      this.state.message = `已确认 ${proposal.confirmedByPlayerIds.length}/${eligible.size}`;
       return {
         eventType: 'LIVE_RESULT_CONFIRMED',
         publicPayload: { proposalId: proposal.id, playerId },
@@ -1445,7 +1418,6 @@ export class RoomActor {
       }
       player.stack = targetStack;
       resetReadyConfirmations(this.state);
-      this.state.message = `${player.nickname} 的筹码已由管理员调整，所有玩家需重新确认`;
       await this.commit({
         eventType: 'ADMIN_STACK_ADJUSTED',
         publicPayload: {
@@ -1523,9 +1495,6 @@ export class RoomActor {
         player.connected = false;
         resetReadyConfirmations(this.state);
       }
-      this.state.message = pending
-        ? `${player.nickname} 将在本手结算后离开牌桌`
-        : `${player.nickname} 已离开牌桌，请重新准备`;
       await this.commit({
         eventType: pending ? 'PLAYER_KICK_SCHEDULED' : 'PLAYER_KICKED',
         publicPayload: { playerId, pending, confirmationsReset: !pending },
@@ -1591,7 +1560,6 @@ export class RoomActor {
       player.sittingOut = false;
       player.connected = false;
       resetReadyConfirmations(this.state);
-      this.state.message = `${player.nickname} 已恢复，请重新选座并准备`;
       await this.commit({
         eventType: 'PLAYER_REINSTATED',
         publicPayload: { playerId, confirmationsReset: true },
@@ -1616,7 +1584,6 @@ export class RoomActor {
       if (this.state.status === 'ACTIVE' || this.state.status === 'DISPUTED') return false;
       this.state.status = 'ARCHIVED';
       this.state.nextHandAt = null;
-      this.state.message = '牌桌已归档';
       await this.commit({
         eventType: 'ROOM_ARCHIVED',
         audit: {
@@ -1671,7 +1638,6 @@ export class RoomActor {
       }
       this.state.status = 'ARCHIVED';
       this.state.nextHandAt = null;
-      this.state.message = '本手投入已退回，牌桌已结束';
       await this.commit({
         eventType: 'ROOM_FORCE_ABORTED',
         publicPayload: { refunded: true },
@@ -1778,7 +1744,6 @@ export class RoomActor {
           ) {
             proposal.confirmedByPlayerIds.push(proposal.proposerPlayerId);
           }
-          this.state.message = '有资格玩家离线，等待全员确认';
           await this.commit({ eventType: 'LIVE_RESULT_REQUIRES_CONFIRMATION' });
           return;
         }
@@ -1790,7 +1755,6 @@ export class RoomActor {
         hand.turnToken = null;
         hand.actionDeadlineAt = null;
         hand.liveProposal = null;
-        this.state.message = '结果存在异议，本手已暂停';
         await this.commit({
           eventType: 'LIVE_RESULT_DISPUTED',
           liveProposalUpdate: { id: proposal.id, status: 'DISPUTED' },

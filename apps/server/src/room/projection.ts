@@ -197,7 +197,6 @@ export function buildProjections(state: RuntimeRoomState): ProjectionBundle {
     pendingLiveStreet: hand?.pendingLiveStreet ?? null,
     prompt,
     liveResultProposal: liveProposalProjection(hand?.liveProposal ?? null),
-    message: state.message,
     nextHandAt: state.nextHandAt,
     createdAt: state.createdAt,
     updatedAt: state.updatedAt,

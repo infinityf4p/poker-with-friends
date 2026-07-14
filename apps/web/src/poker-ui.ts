@@ -174,21 +174,6 @@ export function actingCopy(room: EnhancedRoomProjection, seconds: number): strin
   return `轮到 ${position} · ${seat.nickname ?? '玩家'} · ${seconds} 秒`;
 }
 
-const legacyRoomMessages = new Map([
-  ['在线阵容发生变化，请所有在座玩家重新确认下一手', '牌桌成员已变化，请重新准备'],
-  ['阵容发生变化，请其余玩家重新确认下一手', '牌桌成员已变化，请重新准备'],
-  ['筹码发生变化，请所有玩家重新确认下一手', '筹码已变化，请重新准备'],
-  ['争议超过 120 秒，房间已冻结；管理员只能退款中止', '结果存在异议，本手已暂停'],
-]);
-
-export function roomMessage(message: string | null | undefined): string {
-  if (!message) return '';
-  const known = legacyRoomMessages.get(message);
-  if (known) return known;
-  const removedPlayer = message.match(/^(.+) 已被管理员移出牌桌，请重新确认下一手$/);
-  return removedPlayer ? `${removedPlayer[1]} 已离开牌桌，请重新准备` : message;
-}
-
 function clampAmount(value: number, minimum: number, maximum: number, step: number): number {
   const safe = Math.max(minimum, Math.min(maximum, value));
   if (safe === maximum) return maximum;

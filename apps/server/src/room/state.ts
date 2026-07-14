@@ -74,7 +74,6 @@ export interface RuntimeRoomState {
   players: RuntimePlayer[];
   hand: RuntimeHand | null;
   nextHandAt: string | null;
-  message: string | null;
   createdAt: string;
   updatedAt: string;
 }

@@ -96,7 +96,6 @@ export interface PublicRoomProjection {
   pendingLiveStreet: 'FLOP' | 'TURN' | 'RIVER' | null;
   prompt: PublicActionPrompt | null;
   liveResultProposal: LiveResultProposal | null;
-  message: string | null;
   nextHandAt: string | null;
   readyCount: number;
   requiredReadyCount: number;

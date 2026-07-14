@@ -293,14 +293,10 @@ p {
   border-color: rgba(255, 127, 120, 0.72);
   background: rgba(255, 127, 120, 0.055);
 }
-.field-help,
 .field-error {
   display: block;
   font-size: 11px;
   line-height: 1.45;
-}
-.field-help {
-  color: var(--quiet);
 }
 .field-error {
   color: #ffaaa5;
@@ -911,11 +907,6 @@ p {
   font-size: clamp(29px, 8vw, 39px);
   letter-spacing: -0.04em;
 }
-.invite-subtitle {
-  margin-top: 10px;
-  color: var(--muted);
-  font-size: 12px;
-}
 .invite-stats {
   margin-top: 25px;
   padding: 15px 4px;
@@ -933,19 +924,21 @@ p {
 .invite-stats > div + div {
   border-left: 1px solid var(--line);
 }
-.invite-stats span {
-  display: flex;
+.invite-stats dt,
+.invite-stats dd {
+  margin: 0;
+}
+.invite-stats > div {
   flex-direction: column;
-  align-items: flex-start;
 }
-.invite-stats strong {
-  color: var(--text);
-  font-size: 12px;
-}
-.invite-stats small {
-  margin-top: 2px;
+.invite-stats dt {
   color: var(--quiet);
   font-size: 8px;
+}
+.invite-stats dd {
+  color: var(--text);
+  font-size: 12px;
+  font-weight: 700;
 }
 .invite-seats {
   margin-top: 23px;
@@ -1045,13 +1038,6 @@ p {
   gap: 9px;
   color: var(--quiet);
   font-size: 9px;
-}
-.fair-chip {
-  margin-left: auto;
-  display: flex;
-  align-items: center;
-  gap: 4px;
-  color: var(--muted);
 }
 .table-arena {
   position: relative;
@@ -1173,10 +1159,6 @@ p {
 .live-center-icon {
   color: rgba(245, 178, 94, 0.76);
   font-size: 27px;
-}
-.live-center small {
-  color: rgba(246, 242, 232, 0.55);
-  font-size: 7px;
 }
 .live-center strong {
   font-size: 11px;
@@ -1946,20 +1928,6 @@ p {
   font-size: 9px;
   text-align: right;
 }
-.sheet-safety {
-  padding: 11px;
-  border-radius: 11px;
-  display: flex;
-  align-items: flex-start;
-  gap: 8px;
-  background: rgba(158, 232, 195, 0.06);
-  color: var(--muted);
-  font-size: 8px;
-  line-height: 1.5;
-}
-.sheet-safety .icon {
-  color: var(--mint);
-}
 .topup-content > p {
   color: var(--muted);
   font-size: 10px;
@@ -2558,10 +2526,6 @@ p {
   font-size: 24px;
   color: var(--amber);
 }
-.mode-choice small {
-  color: var(--muted);
-  font-size: 11px;
-}
 .form-grid {
   display: grid;
   grid-template-columns: 1fr 1fr;
@@ -2663,22 +2627,6 @@ p {
   display: grid;
   place-items: center;
   gap: 12px;
-}
-.room-message {
-  display: flex;
-  justify-content: space-between;
-  gap: 10px;
-  min-height: 42px;
-  padding: 10px 13px;
-  margin: -4px 0 12px;
-  border: 1px solid var(--line);
-  border-radius: 12px;
-  color: var(--muted);
-  font-size: 12px;
-}
-.room-message b {
-  color: var(--amber);
-  white-space: nowrap;
 }
 .real-quick-actions button {
   min-width: 0;
@@ -2869,9 +2817,6 @@ p {
   .real-table-layout {
     width: calc(100% - 12px);
   }
-  .room-message {
-    margin-inline: 6px;
-  }
   .real-table-center .community-cards {
     transform: scale(0.9);
   }
@@ -2886,8 +2831,7 @@ p {
 .secondary-button,
 .room-card-actions button,
 .admin-tabs button,
-.row-actions button,
-.sheet-safety {
+.row-actions button {
   display: inline-flex;
   align-items: center;
   gap: 7px;
@@ -4085,10 +4029,6 @@ button:active:not(:disabled) {
     transform: scale(1.018);
     background: rgba(158, 232, 195, 0.08);
   }
-}
-.waiting-names {
-  color: var(--amber);
-  font-size: 11px;
 }
 .ready-button {
   min-height: 48px;

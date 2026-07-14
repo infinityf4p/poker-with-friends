@@ -194,10 +194,7 @@ describe('RoomActor', () => {
     const repository = new FakeRepository();
     const actor = new RoomActor(loaded, repository as unknown as PokerRepository, () => undefined);
     const player = actor.state.players[0]!;
-    const initialMessage = actor.state.message;
-
     await actor.setConnected(player.id, true);
-    expect(actor.state.message).toBe(initialMessage);
     const result = await actor.seatClaim(player.id, {
       commandId: randomUUID(),
       expectedSeq: actor.state.serverSeq,
@@ -205,7 +202,8 @@ describe('RoomActor', () => {
     });
 
     expect(result.ok).toBe(true);
-    expect(actor.state.message).toBe(initialMessage);
+    expect(actor.state).not.toHaveProperty('message');
+    expect(actor.snapshot(player.id).public).not.toHaveProperty('message');
     expect(actor.snapshot(player.id).private?.seat).toBe(3);
     expect(actor.snapshot(player.id).public.seats[3]).toMatchObject({
       playerId: player.id,
@@ -217,6 +215,28 @@ describe('RoomActor', () => {
         .public.seats.filter((seat) => seat.playerId)
         .every((seat) => !seat.isActing),
     ).toBe(true);
+  });
+
+  it('drops presentation messages from legacy encrypted runtime snapshots', () => {
+    const originalLoaded = loadedRoom('ONLINE');
+    const original = new RoomActor(
+      originalLoaded,
+      new FakeRepository() as unknown as PokerRepository,
+      () => undefined,
+    );
+    const recoveredLoaded = loadedRoom('ONLINE');
+    recoveredLoaded.privateState = {
+      ...structuredClone(original.state),
+      message: '桌上有人进出，大家重新点一下准备',
+    };
+    const recovered = new RoomActor(
+      recoveredLoaded,
+      new FakeRepository() as unknown as PokerRepository,
+      () => undefined,
+    );
+
+    expect(recovered.state).not.toHaveProperty('message');
+    expect(recovered.snapshot(recovered.state.players[0]!.id).public).not.toHaveProperty('message');
   });
 
   it.each(['ONLINE', 'LIVE'] as const)(

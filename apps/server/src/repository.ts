@@ -541,7 +541,6 @@ export class PokerRepository {
       pendingLiveStreet: null,
       prompt: null,
       liveResultProposal: null,
-      message: '等待玩家入座并准备',
       nextHandAt: null,
       readyCount: 0,
       requiredReadyCount: 0,
