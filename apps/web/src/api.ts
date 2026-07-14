@@ -20,8 +20,8 @@ export class ApiError extends Error {
   }
 }
 
-function responseErrorMessage(status: number, body: unknown): string {
-  if (!body || typeof body !== 'object') return `请求失败 (${status})`;
+function responseErrorMessage(body: unknown): string {
+  if (!body || typeof body !== 'object') return '请求失败，请重试';
   if ('message' in body && typeof body.message === 'string') return body.message;
   if ('issues' in body && Array.isArray(body.issues)) {
     const firstIssue = body.issues[0];
@@ -34,7 +34,7 @@ function responseErrorMessage(status: number, body: unknown): string {
       return firstIssue.message;
     }
   }
-  return `请求失败 (${status})`;
+  return '请求失败，请重试';
 }
 
 export async function api<T>(path: string, init: RequestInit = {}): Promise<T> {
@@ -48,7 +48,7 @@ export async function api<T>(path: string, init: RequestInit = {}): Promise<T> {
   });
   const body = response.status === 204 ? null : await response.json().catch(() => null);
   if (!response.ok) {
-    throw new ApiError(response.status, responseErrorMessage(response.status, body), body);
+    throw new ApiError(response.status, responseErrorMessage(body), body);
   }
   return body as T;
 }

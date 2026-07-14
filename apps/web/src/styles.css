@@ -441,10 +441,10 @@ p {
   width: min(100%, 420px);
 }
 .login-heading {
-  margin-top: 46px;
+  margin-top: 34px;
 }
 .login-heading h1 {
-  margin-top: 10px;
+  margin: 0;
   font-size: clamp(36px, 11vw, 52px);
   line-height: 1.08;
   letter-spacing: -0.05em;
@@ -452,15 +452,8 @@ p {
 .login-heading h1 span {
   display: inline-block;
 }
-.login-heading p {
-  margin-top: 16px;
-  color: var(--muted);
-  max-width: 330px;
-  font-size: 14px;
-  line-height: 1.7;
-}
 .login-form {
-  margin-top: 42px;
+  margin-top: 30px;
   display: grid;
   gap: 17px;
 }
@@ -490,17 +483,6 @@ p {
   width: 100%;
   margin-top: 18px;
   min-height: 40px;
-}
-.safety-line {
-  margin-top: 25px;
-  padding-top: 20px;
-  border-top: 1px solid var(--line);
-  color: var(--quiet);
-  display: flex;
-  justify-content: center;
-  align-items: center;
-  gap: 7px;
-  font-size: 10px;
 }
 
 /* Dashboard */
@@ -547,14 +529,9 @@ p {
   justify-content: space-between;
 }
 .welcome-row h1 {
-  margin-top: 7px;
+  margin: 0;
   font-size: clamp(27px, 8vw, 40px);
   letter-spacing: -0.035em;
-}
-.welcome-row p {
-  margin-top: 8px;
-  color: var(--muted);
-  font-size: 13px;
 }
 .create-button {
   border: 0;
@@ -1000,40 +977,6 @@ p {
   color: var(--quiet);
   display: grid;
   place-items: center;
-}
-.invite-rules {
-  margin-top: 27px;
-  padding: 17px;
-  border: 1px solid var(--line);
-  border-radius: var(--radius);
-  background: rgba(20, 36, 31, 0.68);
-  text-align: left;
-}
-.invite-rules h2 {
-  font-size: 11px;
-}
-.invite-rules ul {
-  list-style: none;
-  margin: 13px 0 0;
-  padding: 0;
-  display: grid;
-  gap: 13px;
-}
-.invite-rules li {
-  display: flex;
-  align-items: flex-start;
-  gap: 10px;
-  color: var(--mint);
-}
-.invite-rules li span {
-  color: var(--muted);
-  font-size: 9px;
-  line-height: 1.5;
-}
-.invite-rules li strong {
-  display: block;
-  color: var(--text);
-  font-size: 10px;
 }
 .invite-name {
   margin-top: 18px;
@@ -2634,14 +2577,6 @@ p {
 .invite-seats .mini-avatar {
   margin-inline: auto;
 }
-.invite-rules li > span {
-  color: var(--mint);
-  font-weight: 800;
-}
-.invite-rules li p {
-  color: var(--muted);
-  font-size: 12px;
-}
 .join-form {
   display: grid;
   gap: 14px;
@@ -2952,7 +2887,6 @@ p {
 .room-card-actions button,
 .admin-tabs button,
 .row-actions button,
-.safety-line,
 .sheet-safety {
   display: inline-flex;
   align-items: center;
@@ -3062,10 +2996,6 @@ button:active:not(:disabled) {
   width: 100%;
   margin-top: 12px;
 }
-.account-login .safety-line {
-  justify-content: center;
-}
-
 .lobby-page {
   min-height: 100vh;
   background:
@@ -3123,13 +3053,9 @@ button:active:not(:disabled) {
   margin-bottom: 34px;
 }
 .lobby-hero h1 {
-  margin: 8px 0 10px;
+  margin: 0;
   font-size: clamp(29px, 4vw, 46px);
   letter-spacing: -0.035em;
-}
-.lobby-hero p {
-  color: var(--muted);
-  line-height: 1.65;
 }
 .join-code {
   display: grid;
@@ -4168,58 +4094,6 @@ button:active:not(:disabled) {
   min-height: 48px;
 }
 
-.history-intro {
-  display: grid;
-  grid-template-columns: auto minmax(0, 1fr) auto;
-  align-items: center;
-  gap: 11px;
-  padding: 11px 12px;
-  margin: 2px 0 14px;
-  border: 1px solid rgba(158, 232, 195, 0.12);
-  border-radius: 15px;
-  background: linear-gradient(135deg, rgba(158, 232, 195, 0.075), rgba(245, 178, 94, 0.035));
-  color: var(--quiet);
-  font-size: 11px;
-}
-.history-intro__mark {
-  display: grid;
-  width: 38px;
-  height: 38px;
-  place-items: center;
-  border: 1px solid rgba(158, 232, 195, 0.16);
-  border-radius: 12px;
-  background: rgba(158, 232, 195, 0.1);
-  color: var(--mint);
-  box-shadow: inset 0 1px rgba(255, 255, 255, 0.045);
-}
-.history-intro__copy {
-  display: grid;
-  min-width: 0;
-  gap: 3px;
-}
-.history-intro__copy strong {
-  color: var(--text);
-  font-size: 13px;
-  font-weight: 800;
-}
-.history-intro__copy small {
-  overflow: hidden;
-  color: var(--quiet);
-  font-size: 10px;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-}
-.history-intro__count {
-  min-width: 48px;
-  padding: 7px 9px;
-  border: 1px solid rgba(245, 178, 94, 0.16);
-  border-radius: 999px;
-  background: rgba(245, 178, 94, 0.065);
-  color: var(--amber-soft);
-  font-size: 10px;
-  text-align: center;
-  white-space: nowrap;
-}
 .history-state {
   display: grid;
   min-height: 240px;
@@ -4772,17 +4646,6 @@ button:active:not(:disabled) {
   .history-modal {
     width: 100%;
     max-height: calc(100dvh - 18px);
-  }
-  .history-intro__copy small {
-    display: none;
-  }
-  .history-intro {
-    grid-template-columns: auto minmax(0, 1fr) auto;
-    padding: 9px 10px;
-  }
-  .history-intro__mark {
-    width: 34px;
-    height: 34px;
   }
   .history-hand__summary {
     grid-template-columns: 62px minmax(0, 1fr) 18px;

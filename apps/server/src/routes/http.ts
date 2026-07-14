@@ -266,7 +266,7 @@ export async function registerHttpRoutes(
       return { public: await rooms.adminSnapshot(request.params.id), private: null };
     } catch (error) {
       if (error instanceof Error && error.message === 'ROOM_NOT_FOUND') {
-        return reply.code(404).send({ error: 'NOT_FOUND', message: '房间不存在' });
+        return reply.code(404).send({ error: 'NOT_FOUND', message: '牌桌不存在' });
       }
       request.log.error(
         { failure: safeErrorLogContext(error), roomId: request.params.id },
@@ -302,7 +302,7 @@ export async function registerHttpRoutes(
         return result;
       } catch (error) {
         if (error instanceof Error && error.message === 'ROOM_NOT_FOUND') {
-          return reply.code(404).send({ error: 'NOT_FOUND', message: '房间不存在' });
+          return reply.code(404).send({ error: 'NOT_FOUND', message: '牌桌不存在' });
         }
         throw error;
       }
@@ -334,7 +334,7 @@ export async function registerHttpRoutes(
         return result;
       } catch (error) {
         if (error instanceof Error && error.message === 'ROOM_NOT_FOUND') {
-          return reply.code(404).send({ error: 'NOT_FOUND', message: '房间不存在' });
+          return reply.code(404).send({ error: 'NOT_FOUND', message: '牌桌不存在' });
         }
         throw error;
       }
@@ -365,7 +365,7 @@ export async function registerHttpRoutes(
         return result;
       } catch (error) {
         if (error instanceof Error && error.message === 'ROOM_NOT_FOUND') {
-          return reply.code(404).send({ error: 'NOT_FOUND', message: '房间不存在' });
+          return reply.code(404).send({ error: 'NOT_FOUND', message: '牌桌不存在' });
         }
         throw error;
       }
@@ -389,10 +389,10 @@ export async function registerHttpRoutes(
       return reply.code(201).send(membership);
     } catch (error) {
       if (error instanceof Error && ['ROOM_NOT_FOUND', 'USER_NOT_FOUND'].includes(error.message)) {
-        return reply.code(404).send({ error: 'NOT_FOUND', message: '房间或账号不存在' });
+        return reply.code(404).send({ error: 'NOT_FOUND', message: '牌桌或账号不存在' });
       }
       if (error instanceof Error && error.message === 'ROOM_FULL') {
-        return reply.code(409).send({ error: 'ROOM_FULL', message: '房间已满' });
+        return reply.code(409).send({ error: 'ROOM_FULL', message: '牌桌已满' });
       }
       if (error instanceof Error && error.message === 'NICKNAME_TAKEN') {
         return reply.code(409).send({ error: 'NICKNAME_TAKEN', message: '昵称已被使用' });
@@ -403,10 +403,10 @@ export async function registerHttpRoutes(
       if (error instanceof Error && error.message === 'MEMBERSHIP_KICKED') {
         return reply
           .code(409)
-          .send({ error: 'MEMBERSHIP_KICKED', message: '该账号已被踢出，请先恢复' });
+          .send({ error: 'MEMBERSHIP_KICKED', message: '该账号已被移出牌桌，请先恢复' });
       }
       if (error instanceof Error && error.message === 'MEMBERSHIP_CONFLICT') {
-        return reply.code(409).send({ error: 'MEMBERSHIP_CONFLICT', message: '账号已在房间中' });
+        return reply.code(409).send({ error: 'MEMBERSHIP_CONFLICT', message: '账号已加入牌桌' });
       }
       throw error;
     }
@@ -434,10 +434,10 @@ export async function registerHttpRoutes(
         return reply.code(201).send({ ...membership, user });
       } catch (error) {
         if (error instanceof Error && error.message === 'ROOM_NOT_FOUND') {
-          return reply.code(404).send({ error: 'NOT_FOUND', message: '房间不存在' });
+          return reply.code(404).send({ error: 'NOT_FOUND', message: '牌桌不存在' });
         }
         if (error instanceof Error && error.message === 'ROOM_FULL') {
-          return reply.code(409).send({ error: 'ROOM_FULL', message: '房间已满' });
+          return reply.code(409).send({ error: 'ROOM_FULL', message: '牌桌已满' });
         }
         if (error instanceof Error && error.message === 'NICKNAME_TAKEN') {
           return reply.code(409).send({ error: 'NICKNAME_TAKEN', message: '昵称已被使用' });
@@ -446,7 +446,9 @@ export async function registerHttpRoutes(
           return reply.code(400).send({ error: 'BAD_REQUEST', message: '昵称格式无效' });
         }
         if (error instanceof Error && error.message === 'MEMBERSHIP_KICKED') {
-          return reply.code(409).send({ error: 'MEMBERSHIP_KICKED', message: '该身份已被踢出' });
+          return reply
+            .code(409)
+            .send({ error: 'MEMBERSHIP_KICKED', message: '该身份已被移出牌桌' });
         }
         throw error;
       }
@@ -473,10 +475,10 @@ export async function registerHttpRoutes(
       return { inviteUrl: `${config.PUBLIC_ORIGIN}/join/${token}` };
     } catch (error) {
       if (error instanceof Error && error.message === 'ROOM_NOT_FOUND') {
-        return reply.code(404).send({ error: 'NOT_FOUND', message: '房间不存在' });
+        return reply.code(404).send({ error: 'NOT_FOUND', message: '牌桌不存在' });
       }
       if (error instanceof Error && error.message === 'ROOM_ARCHIVED') {
-        return reply.code(409).send({ error: 'ROOM_ARCHIVED', message: '已归档房间不能生成邀请' });
+        return reply.code(409).send({ error: 'ROOM_ARCHIVED', message: '已归档牌桌不能生成邀请' });
       }
       throw error;
     }
@@ -537,7 +539,7 @@ export async function registerHttpRoutes(
         return reply.code(404).send({ error: 'ROOM_NOT_FOUND', message: '牌桌不存在或已结束' });
       }
       if (error instanceof Error && error.message === 'ROOM_FULL') {
-        return reply.code(409).send({ error: 'ROOM_FULL', message: '牌桌已经坐满了' });
+        return reply.code(409).send({ error: 'ROOM_FULL', message: '牌桌已满' });
       }
       if (error instanceof Error && error.message === 'NICKNAME_TAKEN') {
         return reply.code(409).send({ error: 'NICKNAME_TAKEN', message: '桌上已有相同昵称' });
@@ -548,11 +550,11 @@ export async function registerHttpRoutes(
       if (error instanceof Error && error.message === 'MEMBERSHIP_KICKED') {
         return reply.code(409).send({
           error: 'MEMBERSHIP_KICKED',
-          message: '你暂时不能重新加入这张牌桌',
+          message: '暂时无法重新加入该牌桌',
         });
       }
       if (error instanceof Error && error.message === 'MEMBERSHIP_CONFLICT') {
-        return reply.code(409).send({ error: 'MEMBERSHIP_CONFLICT', message: '你已经在这张牌桌' });
+        return reply.code(409).send({ error: 'MEMBERSHIP_CONFLICT', message: '你已加入该牌桌' });
       }
       throw error;
     }
@@ -575,7 +577,7 @@ export async function registerHttpRoutes(
       return reply.code(201).send(joined);
     } catch (error) {
       if (error instanceof Error && error.message === 'ROOM_FULL') {
-        return reply.code(409).send({ error: 'ROOM_FULL', message: '房间已满' });
+        return reply.code(409).send({ error: 'ROOM_FULL', message: '牌桌已满' });
       }
       if (error instanceof Error && error.message === 'NICKNAME_TAKEN') {
         return reply.code(409).send({ error: 'NICKNAME_TAKEN', message: '昵称已被使用' });
@@ -584,10 +586,10 @@ export async function registerHttpRoutes(
         return reply.code(400).send({ error: 'BAD_REQUEST', message: '昵称格式无效' });
       }
       if (error instanceof Error && error.message === 'MEMBERSHIP_KICKED') {
-        return reply.code(409).send({ error: 'MEMBERSHIP_KICKED', message: '你已被该房间踢出' });
+        return reply.code(409).send({ error: 'MEMBERSHIP_KICKED', message: '你已被移出该牌桌' });
       }
       if (error instanceof Error && error.message === 'MEMBERSHIP_CONFLICT') {
-        return reply.code(409).send({ error: 'MEMBERSHIP_CONFLICT', message: '你已加入该房间' });
+        return reply.code(409).send({ error: 'MEMBERSHIP_CONFLICT', message: '你已加入该牌桌' });
       }
       throw error;
     }

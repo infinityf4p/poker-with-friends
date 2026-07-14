@@ -175,7 +175,7 @@ function asRuntimeState(loaded: LoadedRoom): RuntimeRoomState {
     })),
     hand: null,
     nextHandAt: null,
-    message: loaded.room.status === 'ARCHIVED' ? '房间已归档' : '等待玩家加入并准备',
+    message: loaded.room.status === 'ARCHIVED' ? '牌桌已归档' : '等待玩家入座并准备',
     createdAt: publicSnapshot.createdAt ?? loaded.room.createdAt.toISOString(),
     updatedAt: nowIso(),
   };
@@ -908,8 +908,8 @@ export class RoomActor {
     mutate: () => MutationExtras,
   ): Promise<CommandResult> {
     return this.enqueue(async () => {
-      if (this.unhealthy) return this.failure('INTERNAL_ERROR', '牌局恢复失败，已冻结操作');
-      if (!this.hasPlayer(playerId)) return this.failure('FORBIDDEN', '玩家不属于该房间');
+      if (this.unhealthy) return this.failure('INTERNAL_ERROR', '牌局恢复失败，已暂停');
+      if (!this.hasPlayer(playerId)) return this.failure('FORBIDDEN', '玩家不属于该牌桌');
       const membership = this.state.players.find((player) => player.id === playerId)!;
       if (
         membership.membershipStatus === 'KICK_PENDING' &&
@@ -929,12 +929,12 @@ export class RoomActor {
       );
       if (duplicate?.kind === 'match') return duplicate.result;
       if (duplicate?.kind === 'conflict') {
-        return this.failure('CONFLICT', 'commandId 已被其他玩家或不同请求使用');
+        return this.failure('CONFLICT', '重复操作，请重试');
       }
       let failure: CommandFailure | null = null;
-      if (this.state.status === 'ARCHIVED') failure = this.failure('ROOM_ARCHIVED', '房间已归档');
+      if (this.state.status === 'ARCHIVED') failure = this.failure('ROOM_ARCHIVED', '牌桌已归档');
       else if (this.state.status === 'DISPUTED')
-        failure = this.failure('CONFLICT', '争议牌局已冻结，只能由管理员退款中止');
+        failure = this.failure('CONFLICT', '结果存在异议，只能由管理员退回本手');
       else if (envelope.expectedSeq !== this.state.serverSeq) {
         failure = this.failure('STALE_SEQUENCE', '牌桌状态已更新，请同步后重试');
       }
@@ -961,7 +961,7 @@ export class RoomActor {
             ? this.failure(error.code, error.message)
             : error instanceof BettingRuleError
               ? this.failure('ILLEGAL_ACTION', error.message)
-              : this.failure('INTERNAL_ERROR', '处理命令失败');
+              : this.failure('INTERNAL_ERROR', '操作失败，请重试');
         await this.repository.persistRejectedCommand(
           this.state.roomId,
           envelope.commandId,
@@ -976,7 +976,7 @@ export class RoomActor {
         commandId: envelope.commandId,
         playerId,
         requestHash,
-        result: this.failure('INTERNAL_ERROR', '命令尚未完成'),
+        result: this.failure('INTERNAL_ERROR', '操作尚未完成'),
       };
       try {
         await this.commit(extras, playerId, commandRecord);
@@ -1016,7 +1016,7 @@ export class RoomActor {
             return this.failure('STALE_SEQUENCE', '牌桌已由更新状态接管，请同步后重试');
           }
         }
-        return this.failure('INTERNAL_ERROR', '提交结果不确定，牌局已冻结以保护筹码');
+        return this.failure('INTERNAL_ERROR', '结果提交状态异常，牌局已暂停');
       }
     });
   }
@@ -1059,8 +1059,9 @@ export class RoomActor {
         });
       }
       if (changed) {
+        const hadReadyConfirmation = this.state.players.some((player) => player.ready);
         resetReadyConfirmations(this.state);
-        this.state.message = '新玩家已加入，所有玩家需要重新确认';
+        this.state.message = hadReadyConfirmation ? '牌桌成员已变化，请重新准备' : null;
         await this.commit({ eventType: 'PLAYER_JOINED' });
       }
     });
@@ -1072,8 +1073,9 @@ export class RoomActor {
       if (!player || player.connected === connected || this.state.status === 'ARCHIVED') return;
       player.connected = connected;
       if (this.state.status !== 'ACTIVE') {
+        const hadReadyConfirmation = this.state.players.some((candidate) => candidate.ready);
         resetReadyConfirmations(this.state);
-        this.state.message = '桌上有人进出，大家重新点一下准备';
+        if (hadReadyConfirmation) this.state.message = '牌桌成员已变化，请重新准备';
       } else if (!connected) {
         player.ready = false;
       }
@@ -1101,7 +1103,9 @@ export class RoomActor {
         throw new RoomRuleError('CONFLICT', '当前手牌结束前不能换座');
       }
       player.seat = command.payload.seat;
+      const hadReadyConfirmation = this.state.players.some((candidate) => candidate.ready);
       resetReadyConfirmations(this.state);
+      if (hadReadyConfirmation) this.state.message = '牌桌成员已变化，请重新准备';
       return { eventType: 'SEAT_CLAIMED', publicPayload: { playerId, seat: command.payload.seat } };
     });
   }
@@ -1133,7 +1137,7 @@ export class RoomActor {
       const player = this.state.players.find((candidate) => candidate.id === playerId)!;
       resetReadyConfirmations(this.state);
       player.sittingOut = true;
-      this.state.message = '桌上阵容有变化，大家重新点一下准备';
+      this.state.message = '牌桌成员已变化，请重新准备';
       return {
         eventType: 'PLAYER_SITTING_OUT',
         publicPayload: { playerId, confirmationsReset: true },
@@ -1148,15 +1152,15 @@ export class RoomActor {
       }
       const player = this.state.players.find((candidate) => candidate.id === playerId)!;
       if (player.stack >= this.state.settings.stackCap) {
-        throw new RoomRuleError('CONFLICT', '当前筹码已达到或高于房间上限');
+        throw new RoomRuleError('CONFLICT', '当前筹码已达到或高于牌桌上限');
       }
       if (command.payload.targetStack !== this.state.settings.stackCap) {
-        throw new RoomRuleError('BAD_REQUEST', '补充操作必须补至房间上限');
+        throw new RoomRuleError('BAD_REQUEST', '补充操作必须补至牌桌上限');
       }
       const before = player.stack;
       player.stack = this.state.settings.stackCap;
       resetReadyConfirmations(this.state);
-      this.state.message = '筹码刚刚有变动，大家重新点一下准备';
+      this.state.message = '筹码已变化，请重新准备';
       return {
         eventType: 'STACK_TOPPED_UP',
         publicPayload: { playerId, targetStack: player.stack, confirmationsReset: true },
@@ -1178,7 +1182,7 @@ export class RoomActor {
       if (!hand || this.state.status !== 'ACTIVE')
         throw new RoomRuleError('CONFLICT', '当前没有进行中的手牌');
       if (hand.turnToken !== command.turnToken)
-        throw new RoomRuleError('STALE_TURN', '行动令牌已失效');
+        throw new RoomRuleError('STALE_TURN', '牌桌状态已更新，请重试');
       if (hand.betting.actorId !== playerId)
         throw new RoomRuleError('ILLEGAL_ACTION', '尚未轮到你行动');
       const before = handPlayer(hand, playerId);
@@ -1289,7 +1293,7 @@ export class RoomActor {
         throw new RoomRuleError('CONFLICT', '当前不在 LIVE 摊牌结果提交阶段');
       }
       if (this.state.status !== 'ACTIVE') {
-        throw new RoomRuleError('CONFLICT', '当前房间不允许提交结果');
+        throw new RoomRuleError('CONFLICT', '当前牌桌不允许提交结果');
       }
       if (currentLiveDealerPlayerId(this.state) !== playerId) {
         throw new RoomRuleError('FORBIDDEN', '只有当前发牌确认人可以提交结果');
@@ -1352,7 +1356,7 @@ export class RoomActor {
         throw new RoomRuleError('NOT_FOUND', '待确认结果不存在');
       }
       if (this.state.status !== 'ACTIVE') {
-        throw new RoomRuleError('CONFLICT', '当前房间不允许处理结果异议');
+        throw new RoomRuleError('CONFLICT', '当前牌桌不允许处理结果异议');
       }
       const eligible = new Set(
         (hand.sidePotBuild ?? buildCurrentPots(hand)).pots.flatMap((pot) => pot.eligiblePlayerIds),
@@ -1383,7 +1387,7 @@ export class RoomActor {
         throw new RoomRuleError('NOT_FOUND', '待确认结果不存在');
       }
       if (this.state.status !== 'ACTIVE') {
-        throw new RoomRuleError('CONFLICT', '当前房间不允许确认结果');
+        throw new RoomRuleError('CONFLICT', '当前牌桌不允许确认结果');
       }
       if (!hand.liveHadObjection) throw new RoomRuleError('CONFLICT', '无异议方案无需逐人确认');
       const eligible = new Set(
@@ -1424,7 +1428,7 @@ export class RoomActor {
         return { ok: false, code: 'CONFLICT', message: '只能在两手之间调整筹码' };
       }
       if (this.state.status === 'ARCHIVED') {
-        return { ok: false, code: 'CONFLICT', message: '已归档房间不能调整筹码' };
+        return { ok: false, code: 'CONFLICT', message: '已归档牌桌不能调整筹码' };
       }
       const player = this.state.players.find((candidate) => candidate.id === playerId);
       if (!player || player.membershipStatus !== 'ACTIVE') {
@@ -1483,7 +1487,7 @@ export class RoomActor {
   ): Promise<AdminPlayerOperationResult> {
     return this.enqueue(async () => {
       if (this.state.status === 'ARCHIVED') {
-        return { ok: false, code: 'CONFLICT', message: '已归档房间不能移出玩家' };
+        return { ok: false, code: 'CONFLICT', message: '已归档牌桌不能移出玩家' };
       }
       const player = this.state.players.find((candidate) => candidate.id === playerId);
       if (!player) return { ok: false, code: 'NOT_FOUND', message: '玩家不存在' };
@@ -1521,7 +1525,7 @@ export class RoomActor {
       }
       this.state.message = pending
         ? `${player.nickname} 将在本手结算后离开牌桌`
-        : `${player.nickname} 已离开牌桌，大家重新点一下准备`;
+        : `${player.nickname} 已离开牌桌，请重新准备`;
       await this.commit({
         eventType: pending ? 'PLAYER_KICK_SCHEDULED' : 'PLAYER_KICKED',
         publicPayload: { playerId, pending, confirmationsReset: !pending },
@@ -1551,7 +1555,7 @@ export class RoomActor {
         return { ok: false, code: 'CONFLICT', message: '只能在两手之间恢复玩家' };
       }
       if (this.state.status === 'ARCHIVED') {
-        return { ok: false, code: 'CONFLICT', message: '已归档房间不能恢复玩家' };
+        return { ok: false, code: 'CONFLICT', message: '已归档牌桌不能恢复玩家' };
       }
       const player = this.state.players.find((candidate) => candidate.id === playerId);
       if (!player) return { ok: false, code: 'NOT_FOUND', message: '玩家不存在' };
@@ -1567,7 +1571,7 @@ export class RoomActor {
         (candidate) => candidate.membershipStatus !== 'KICKED' && candidate.id !== playerId,
       ).length;
       if (activeMembers >= this.state.settings.maxPlayers) {
-        return { ok: false, code: 'CONFLICT', message: '房间有效玩家已满' };
+        return { ok: false, code: 'CONFLICT', message: '牌桌玩家已满' };
       }
       const nicknameTaken = this.state.players.some(
         (candidate) =>
@@ -1587,7 +1591,7 @@ export class RoomActor {
       player.sittingOut = false;
       player.connected = false;
       resetReadyConfirmations(this.state);
-      this.state.message = `${player.nickname} 已恢复为房间成员，请重新选座并确认`;
+      this.state.message = `${player.nickname} 已恢复，请重新选座并准备`;
       await this.commit({
         eventType: 'PLAYER_REINSTATED',
         publicPayload: { playerId, confirmationsReset: true },
@@ -1612,7 +1616,7 @@ export class RoomActor {
       if (this.state.status === 'ACTIVE' || this.state.status === 'DISPUTED') return false;
       this.state.status = 'ARCHIVED';
       this.state.nextHandAt = null;
-      this.state.message = '房间已由管理员归档';
+      this.state.message = '牌桌已归档';
       await this.commit({
         eventType: 'ROOM_ARCHIVED',
         audit: {
@@ -1667,7 +1671,7 @@ export class RoomActor {
       }
       this.state.status = 'ARCHIVED';
       this.state.nextHandAt = null;
-      this.state.message = '本手投入已退回，房间已强制中止';
+      this.state.message = '本手投入已退回，牌桌已结束';
       await this.commit({
         eventType: 'ROOM_FORCE_ABORTED',
         publicPayload: { refunded: true },
@@ -1774,7 +1778,7 @@ export class RoomActor {
           ) {
             proposal.confirmedByPlayerIds.push(proposal.proposerPlayerId);
           }
-          this.state.message = '有资格玩家离线，结果改为全员确认；120 秒未解决将冻结';
+          this.state.message = '有资格玩家离线，等待全员确认';
           await this.commit({ eventType: 'LIVE_RESULT_REQUIRES_CONFIRMATION' });
           return;
         }
@@ -1786,7 +1790,7 @@ export class RoomActor {
         hand.turnToken = null;
         hand.actionDeadlineAt = null;
         hand.liveProposal = null;
-        this.state.message = '结果还没商量好，这一手先暂停';
+        this.state.message = '结果存在异议，本手已暂停';
         await this.commit({
           eventType: 'LIVE_RESULT_DISPUTED',
           liveProposalUpdate: { id: proposal.id, status: 'DISPUTED' },

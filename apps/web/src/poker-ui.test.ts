@@ -8,7 +8,7 @@ import { describe, expect, it } from 'vitest';
 import {
   betSuggestions,
   cardRankLabel,
-  friendlyRoomMessage,
+  roomMessage,
   historyActions,
   historySettlement,
   naturalAction,
@@ -97,13 +97,13 @@ describe('poker UI helpers', () => {
   });
 
   it('keeps persisted room messages friendly after copy updates', () => {
-    expect(friendlyRoomMessage('在线阵容发生变化，请所有在座玩家重新确认下一手')).toBe(
-      '桌上有人进出，大家重新点一下准备',
+    expect(roomMessage('在线阵容发生变化，请所有在座玩家重新确认下一手')).toBe(
+      '牌桌成员已变化，请重新准备',
     );
-    expect(friendlyRoomMessage('小明 已被管理员移出牌桌，请重新确认下一手')).toBe(
-      '小明 已离开牌桌，大家重新点一下准备',
+    expect(roomMessage('小明 已被管理员移出牌桌，请重新确认下一手')).toBe(
+      '小明 已离开牌桌，请重新准备',
     );
-    expect(friendlyRoomMessage('下一位请行动')).toBe('下一位请行动');
+    expect(roomMessage('下一位请行动')).toBe('下一位请行动');
   });
 
   it('offers open, 3-bet, and 4-bet targets from server betting context', () => {

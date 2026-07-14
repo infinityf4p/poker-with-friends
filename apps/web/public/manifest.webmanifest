@@ -1,7 +1,7 @@
 {
   "name": "Poker with Friends",
   "short_name": "Poker with Friends",
-  "description": "朋友到齐，随时开牌的线上与线下德州牌桌",
+  "description": "线上与线下德州扑克",
   "lang": "zh-CN",
   "start_url": "/",
   "display": "standalone",

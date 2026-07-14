@@ -24,6 +24,14 @@ export interface RoomConnection {
   refresh: () => Promise<void>;
 }
 
+function commandErrorMessage(code: string, message: string): string {
+  if (code === 'STALE_SEQUENCE' || code === 'STALE_TURN') {
+    return '牌桌状态已更新，请重试';
+  }
+  if (code === 'INTERNAL_ERROR') return '操作失败，请重试';
+  return message;
+}
+
 export function useRoom(roomId: string, adminView = false): RoomConnection {
   const [room, setRoom] = useState<PublicRoomProjection | null>(null);
   const [me, setMe] = useState<PrivatePlayerProjection | null>(null);
@@ -47,7 +55,7 @@ export function useRoom(roomId: string, adminView = false): RoomConnection {
   const applySnapshot = useCallback(
     (snapshot: RoomSnapshotEnvelope): boolean => {
       if (snapshot.public.roomId !== roomId) {
-        setError('当前玩家会话不属于这个房间');
+        setError('当前会话与牌桌不匹配');
         return false;
       }
       if (snapshot.public.serverSeq < (roomRef.current?.serverSeq ?? -1)) return false;
@@ -64,7 +72,7 @@ export function useRoom(roomId: string, adminView = false): RoomConnection {
   const applyPublic = useCallback(
     (next: PublicRoomProjection): void => {
       if (next.roomId !== roomId) {
-        setError('实时连接返回了其他房间，已拒绝该快照');
+        setError('牌桌连接异常');
         return;
       }
       if (next.serverSeq < (roomRef.current?.serverSeq ?? -1)) return;
@@ -83,7 +91,7 @@ export function useRoom(roomId: string, adminView = false): RoomConnection {
       );
       if (adminView) setConnected(true);
     } catch (caught) {
-      setError(caught instanceof Error ? caught.message : '无法同步牌桌');
+      setError(caught instanceof Error ? caught.message : '牌桌同步失败');
     } finally {
       setLoading(false);
     }
@@ -109,8 +117,8 @@ export function useRoom(roomId: string, adminView = false): RoomConnection {
     socketRef.current = socket;
     socket.on('connect', () => setConnected(true));
     socket.on('disconnect', () => setConnected(false));
-    socket.on('connect_error', (caught) => {
-      if (!revokedRef.current) setError(caught.message || '实时连接失败');
+    socket.on('connect_error', () => {
+      if (!revokedRef.current) setError('连接失败，正在重试');
     });
     socket.on('membership.revoked', (payload: { roomId?: string }) => {
       if (payload.roomId && payload.roomId !== roomId) return;
@@ -118,7 +126,7 @@ export function useRoom(roomId: string, adminView = false): RoomConnection {
       meRef.current = null;
       setMe(null);
       setConnected(false);
-      setError('你已被移出该房间');
+      setError('你已被移出牌桌');
       socket.io.opts.reconnection = false;
       socket.disconnect();
     });
@@ -131,7 +139,7 @@ export function useRoom(roomId: string, adminView = false): RoomConnection {
       meRef.current = next;
       setMe(next);
     });
-    socket.on('room.error', (next: { message?: string }) => setError(next.message ?? '牌桌已冻结'));
+    socket.on('room.error', (next: { message?: string }) => setError(next.message ?? '牌桌已暂停'));
     return () => {
       socket.removeAllListeners();
       socket.disconnect();
@@ -149,11 +157,11 @@ export function useRoom(roomId: string, adminView = false): RoomConnection {
       const currentRoom = roomRef.current;
       const currentMe = meRef.current;
       if (pendingRef.current) {
-        setError('上一项操作仍在确认，请勿重复点击');
+        setError('操作处理中，请稍候');
         return false;
       }
       if (!socket?.connected || !currentRoom) {
-        setError('实时连接尚未就绪');
+        setError('连接尚未就绪');
         return false;
       }
       const envelope: Record<string, unknown> = {
@@ -163,7 +171,7 @@ export function useRoom(roomId: string, adminView = false): RoomConnection {
       };
       if (options.needsTurnToken) {
         if (!currentMe?.turnToken) {
-          setError('行动令牌已更新，请稍候重试');
+          setError('牌桌状态已更新，请重试');
           await refresh();
           return false;
         }
@@ -178,7 +186,7 @@ export function useRoom(roomId: string, adminView = false): RoomConnection {
             if (timeoutError || !result) {
               pendingRef.current = false;
               setBusy(false);
-              setError('操作确认超时，正在重新同步');
+              setError('操作超时，正在重新同步');
               void refresh();
               resolve(false);
               return;
@@ -186,7 +194,7 @@ export function useRoom(roomId: string, adminView = false): RoomConnection {
             if (!result.ok) {
               pendingRef.current = false;
               setBusy(false);
-              setError(result.message);
+              setError(commandErrorMessage(result.code, result.message));
               if (result.code === 'STALE_SEQUENCE' || result.code === 'STALE_TURN') void refresh();
               resolve(false);
               return;

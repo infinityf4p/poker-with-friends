@@ -26,7 +26,7 @@ import {
   betSuggestions,
   cardRankLabel,
   formatPoints,
-  friendlyRoomMessage,
+  roomMessage,
   historyActions,
   historySettlement,
   naturalAction,
@@ -70,7 +70,6 @@ function Brand({ compact = false }: { compact?: boolean }) {
       {!compact && (
         <span>
           <strong>Poker with Friends</strong>
-          <small>PLAY TOGETHER</small>
         </span>
       )}
     </button>
@@ -81,7 +80,7 @@ function ModeBadge({ mode }: { mode: RoomMode }) {
   return (
     <span className={`mode-badge mode-badge--${mode.toLowerCase()}`}>
       <Icon name={mode === 'ONLINE' ? 'cards' : 'table'} size={14} />
-      {mode === 'ONLINE' ? '线上 · 自动发牌' : '线下 · 实体牌面'}
+      {mode === 'ONLINE' ? '线上牌桌' : '线下牌桌'}
     </span>
   );
 }
@@ -165,7 +164,7 @@ function HomePage() {
         setPasswordOpen(user.mustChangePassword);
         if (!user.mustChangePassword) {
           return loadRooms().catch((caught) =>
-            setError(caught instanceof Error ? caught.message : '无法载入房间列表'),
+            setError(caught instanceof Error ? caught.message : '牌桌列表加载失败'),
           );
         }
       })
@@ -190,11 +189,11 @@ function HomePage() {
       return;
     }
     if (room.membership?.status === 'KICKED') {
-      setError('你暂时不能重新加入这张牌桌');
+      setError('暂时无法重新加入该牌桌');
       return;
     }
     if (room.availableSeats === 0) {
-      setError('这张牌桌已经坐满了');
+      setError('牌桌已满');
       return;
     }
     setJoiningRoomId(room.roomId);
@@ -206,14 +205,14 @@ function HomePage() {
       });
       navigate(`/room/${joined.roomId}`);
     } catch (caught) {
-      setError(caught instanceof Error ? caught.message : '没能加入这张牌桌');
+      setError(caught instanceof Error ? caught.message : '加入牌桌失败');
       await loadRooms().catch(() => undefined);
     } finally {
       setJoiningRoomId(null);
     }
   };
 
-  if (checking) return <Loading label="正在验证玩家会话…" />;
+  if (checking) return <Loading />;
   if (!session) {
     return (
       <UserLogin
@@ -264,9 +263,7 @@ function HomePage() {
       <div className="page-container lobby-content">
         <section className="lobby-hero">
           <div>
-            <span className="eyebrow">牌桌大厅</span>
-            <h1>{session.displayName}，挑一桌坐下。</h1>
-            <p>所有朋友桌都在这里。看到空位就能直接加入，不用再找邀请码。</p>
+            <h1>牌桌大厅</h1>
           </div>
           <div className="lobby-overview" aria-label="牌桌概览">
             <span>
@@ -286,7 +283,6 @@ function HomePage() {
         <section className="lobby-room-section" aria-labelledby="all-rooms-heading">
           <header>
             <div>
-              <span className="eyebrow">现在可以加入</span>
               <h2 id="all-rooms-heading">全部牌桌</h2>
             </div>
             <button
@@ -310,14 +306,13 @@ function HomePage() {
             {rooms.length === 0 && (
               <div className="empty-state rich-empty lobby-room-empty">
                 <Icon name="table" size={32} />
-                <strong>还没有人开桌</strong>
-                <span>开一张新桌，朋友登录后就能直接看到并加入。</span>
+                <strong>暂无牌桌</strong>
               </div>
             )}
           </div>
         </section>
         <button type="button" className="admin-entry" onClick={() => navigate('/admin')}>
-          <Icon name="table" size={16} /> 开桌管理
+          <Icon name="table" size={16} /> 管理员入口
         </button>
       </div>
       {passwordOpen && (
@@ -327,7 +322,7 @@ function HomePage() {
           onComplete={async (updated) => {
             setSession(updated);
             await loadRooms().catch((caught) =>
-              setError(caught instanceof Error ? caught.message : '密码已修改，但房间列表载入失败'),
+              setError(caught instanceof Error ? caught.message : '密码已修改，牌桌列表加载失败'),
             );
             setPasswordOpen(false);
           }}
@@ -411,11 +406,11 @@ function LobbyRoomCard({
           <strong>
             {room.playerCount
               ? room.players.map((player) => player.nickname).join('、')
-              : '等你入座'}
+              : '暂无玩家'}
           </strong>
           <small>
-            {onlineCount > 0 ? `${onlineCount} 人在线` : '暂时无人在线'} ·{' '}
-            {room.availableSeats > 0 ? `还有 ${room.availableSeats} 个位置` : '已经坐满'}
+            {onlineCount > 0 ? `${onlineCount} 人在线` : '无人在线'} ·{' '}
+            {room.availableSeats > 0 ? `${room.availableSeats} 个空位` : '已满'}
           </small>
         </span>
       </div>
@@ -437,10 +432,8 @@ function LobbyRoomCard({
             <>
               <Icon name="door" size={15} />
               <span>
-                <strong>{full ? '这桌暂时没有空位' : '登录账号直接加入'}</strong>
-                <small>
-                  {room.mode === 'LIVE' ? '线下发牌，线上记筹码' : '网站自动发牌与结算'}
-                </small>
+                <strong>{full ? '牌桌已满' : '可直接加入'}</strong>
+                <small>{room.mode === 'LIVE' ? '实体牌＋数字筹码' : '自动发牌与结算'}</small>
               </span>
             </>
           )}
@@ -485,12 +478,7 @@ function UserLogin({
           <i />
         </div>
         <div className="login-heading">
-          <span className="eyebrow">朋友局 · 随时开桌</span>
-          <h1>
-            <span>朋友到齐，</span>
-            <span>牌桌就绪。</span>
-          </h1>
-          <p>登录后可以查看并加入所有朋友桌。线上自动发牌，线下专注收发筹码。</p>
+          <h1>登录</h1>
         </div>
         {error && <ErrorBox>{error}</ErrorBox>}
         <form
@@ -528,16 +516,13 @@ function UserLogin({
             </span>
           </label>
           <button className="primary-button" disabled={pending || !username.trim() || !password}>
-            {pending ? '正在登录…' : '登录并进入牌桌大厅'}
+            {pending ? '正在登录…' : '登录'}
             {!pending && <Icon name="arrow-right" size={18} />}
           </button>
         </form>
         <button type="button" className="text-button" onClick={() => navigate('/admin')}>
-          我来开桌
+          管理员入口
         </button>
-        <p className="safety-line">
-          <Icon name="spark" size={14} /> 约上朋友，坐下就开牌
-        </p>
       </section>
     </main>
   );
@@ -558,12 +543,7 @@ function PasswordDialog({
   const [error, setError] = useState<string | null>(null);
   const [pending, setPending] = useState(false);
   return (
-    <Modal
-      title={locked ? '首次登录，请设置新密码' : '修改登录密码'}
-      onClose={onClose}
-      locked={locked}
-    >
-      <p>新密码至少 12 位。提交成功后，其他设备上的旧会话将失效。</p>
+    <Modal title={locked ? '设置新密码' : '修改登录密码'} onClose={onClose} locked={locked}>
       {error && <ErrorBox>{error}</ErrorBox>}
       <form
         className="sheet-form"
@@ -595,7 +575,7 @@ function PasswordDialog({
           />
         </label>
         <label className="field">
-          <span>新密码</span>
+          <span>新密码（至少 12 位）</span>
           <input
             type="password"
             minLength={12}
@@ -652,14 +632,14 @@ function AdminPage() {
       .then((admin) => {
         setSession(admin);
         return Promise.all([loadRooms(), loadUsers()]).catch((caught) =>
-          setError(caught instanceof Error ? caught.message : '无法载入管理数据'),
+          setError(caught instanceof Error ? caught.message : '管理数据加载失败'),
         );
       })
       .catch(() => setSession(null))
       .finally(() => setChecking(false));
   }, []);
 
-  if (checking) return <Loading label="正在进入开桌管理…" />;
+  if (checking) return <Loading label="正在加载管理页面…" />;
   if (!session) {
     return (
       <AdminLogin
@@ -700,9 +680,7 @@ function AdminPage() {
   };
 
   const archive = async (room: AdminRoomSummary, force = false) => {
-    const question = force
-      ? '这会退回本手全部投入并永久归档房间，确定继续？'
-      : '确定归档这个房间？';
+    const question = force ? '将退回本手全部投入并归档牌桌，确定继续？' : '确定归档该牌桌？';
     if (!window.confirm(question)) return;
     try {
       await api(`/api/admin/rooms/${room.id}/${force ? 'force-abort' : 'archive'}`, {
@@ -730,7 +708,7 @@ function AdminPage() {
           }}
         >
           <span>
-            <small>开桌人</small>
+            <small>管理员</small>
             <strong>{session.username}</strong>
           </span>
           <b className="admin-avatar">
@@ -741,13 +719,7 @@ function AdminPage() {
       <div className="page-container dashboard-content">
         <section className="welcome-row">
           <div>
-            <span className="eyebrow">组局小助手</span>
             <h1>{tab === 'rooms' ? '牌桌管理' : '账号管理'}</h1>
-            <p>
-              {tab === 'rooms'
-                ? '开桌、拉朋友入座，今晚就从这里开始。'
-                : '给朋友建个账号，之后就能直接进桌。'}
-            </p>
           </div>
           <button
             className="create-button"
@@ -757,7 +729,7 @@ function AdminPage() {
               else setCreatingAccount(true);
             }}
           >
-            <Icon name="plus" size={18} /> {tab === 'rooms' ? '新建房间' : '新建账号'}
+            <Icon name="plus" size={18} /> {tab === 'rooms' ? '新建牌桌' : '新建账号'}
           </button>
         </section>
         <nav className="admin-tabs" aria-label="管理区">
@@ -766,7 +738,7 @@ function AdminPage() {
             className={tab === 'rooms' ? 'active' : ''}
             onClick={() => setTab('rooms')}
           >
-            <Icon name="table" size={17} /> 房间 <span>{rooms.length}</span>
+            <Icon name="table" size={17} /> 牌桌 <span>{rooms.length}</span>
           </button>
           <button
             aria-pressed={tab === 'accounts'}
@@ -780,7 +752,7 @@ function AdminPage() {
         {latestInvite && (
           <div className="invite-output">
             <div>
-              <small>新邀请已生成，旧邀请同时失效</small>
+              <small>邀请链接已更新</small>
               <code>{latestInvite.url}</code>
             </div>
             <button
@@ -805,7 +777,7 @@ function AdminPage() {
                 <div className="room-card-top">
                   <ModeBadge mode={room.mode} />
                   <span className={`status-pill status-pill--${room.status.toLowerCase()}`}>
-                    {room.status}
+                    {statusLabel[room.status] ?? room.status}
                   </span>
                 </div>
                 <div className="real-room-title">
@@ -821,7 +793,7 @@ function AdminPage() {
                 </div>
                 <div className="room-card-actions real-admin-actions">
                   <button onClick={() => navigate(`/room/${room.id}?view=public`)}>
-                    <Icon name="eye" size={15} /> 旁观牌桌
+                    <Icon name="eye" size={15} /> 旁观
                   </button>
                   <button
                     onClick={() => {
@@ -832,7 +804,7 @@ function AdminPage() {
                       void loadRoomPlayers(room.id)
                         .catch((caught) =>
                           setRoomPlayersError(
-                            caught instanceof Error ? caught.message : '无法载入玩家',
+                            caught instanceof Error ? caught.message : '玩家列表加载失败',
                           ),
                         )
                         .finally(() => setRoomPlayersLoading(false));
@@ -844,22 +816,23 @@ function AdminPage() {
                     disabled={rotatingRoomId !== null || room.status === 'ARCHIVED'}
                     onClick={() => void rotateInvite(room.id)}
                   >
-                    <Icon name="copy" size={15} /> {rotatingRoomId === room.id ? '生成中…' : '邀请'}
+                    <Icon name="copy" size={15} />{' '}
+                    {rotatingRoomId === room.id ? '生成中…' : '邀请链接'}
                   </button>
                   {room.status !== 'ARCHIVED' &&
                     room.status !== 'ACTIVE' &&
                     room.status !== 'DISPUTED' && (
-                      <button onClick={() => void archive(room)}>归档</button>
+                      <button onClick={() => void archive(room)}>归档牌桌</button>
                     )}
                   {(room.status === 'ACTIVE' || room.status === 'DISPUTED') && (
                     <button className="danger-button" onClick={() => void archive(room, true)}>
-                      退回本手并收桌
+                      退回本手并结束牌桌
                     </button>
                   )}
                 </div>
               </article>
             ))}
-            {rooms.length === 0 && <div className="empty-state">还没有牌桌，先开一桌等朋友。</div>}
+            {rooms.length === 0 && <div className="empty-state">暂无牌桌</div>}
           </section>
         ) : (
           <AccountsPanel
@@ -887,7 +860,7 @@ function AdminPage() {
               await navigator.clipboard.writeText(created.inviteUrl).catch(() => undefined);
             }
             await loadRooms().catch((caught) =>
-              setError(caught instanceof Error ? caught.message : '房间已创建，但列表刷新失败'),
+              setError(caught instanceof Error ? caught.message : '牌桌已创建，列表刷新失败'),
             );
             setCreating(false);
           }}
@@ -941,9 +914,7 @@ function AdminLogin({
       <section className="login-card">
         <Brand />
         <div className="login-heading">
-          <span className="eyebrow">开桌入口</span>
-          <h1>开桌管理</h1>
-          <p>开桌的人从这里登录；其他朋友直接回首页进入牌桌。</p>
+          <h1>管理员登录</h1>
         </div>
         {error && <ErrorBox>{error}</ErrorBox>}
         <form
@@ -973,7 +944,7 @@ function AdminLogin({
             />
           </label>
           <button className="primary-button" disabled={pending || !password}>
-            {pending ? '正在登录…' : '开始组局'}
+            {pending ? '正在登录…' : '登录'}
           </button>
         </form>
       </section>
@@ -1017,7 +988,7 @@ function AccountsPanel({
           </button>
         </article>
       ))}
-      {users.length === 0 && <div className="empty-state">还没有普通玩家账号。</div>}
+      {users.length === 0 && <div className="empty-state">暂无玩家账号</div>}
       {resetting && (
         <ResetPasswordDialog
           user={resetting}
@@ -1051,8 +1022,7 @@ function CreateAccountDialog({
     (displayName.trim().length > 0 || normalizedUsername.length <= 20);
   const passwordValid = password.length >= 12 && password.length <= 256;
   return (
-    <Modal title="给朋友创建账号" onClose={onClose}>
-      <p>先设置一个临时密码，朋友首次登录后可以换成自己的密码。</p>
+    <Modal title="新建账号" onClose={onClose}>
       {error && <ErrorBox onClose={() => setError(null)}>{error}</ErrorBox>}
       <form
         className="sheet-form"
@@ -1086,7 +1056,7 @@ function CreateAccountDialog({
             autoFocus
           />
           <small id="create-account-username-help" className="field-help">
-            3–64 位，仅限英文、数字、点、下划线和短横线，例如 player_1。
+            3–64 位，可使用英文、数字、点、下划线和短横线。
           </small>
           {username.length > 0 && !usernameValid && (
             <small className="field-error" role="alert">
@@ -1104,7 +1074,7 @@ function CreateAccountDialog({
             aria-describedby="create-account-display-help"
           />
           <small id="create-account-display-help" className="field-help">
-            最多 20 个字符，可以使用中文；账号超过 20 位时必须填写。
+            最多 20 个字符；账号超过 20 位时必须填写。
           </small>
           {!displayNameValid && (
             <small className="field-error" role="alert">
@@ -1135,7 +1105,7 @@ function CreateAccountDialog({
           )}
         </label>
         <p className="sheet-safety">
-          <Icon name="key" size={15} /> 请通过可信渠道把临时密码单独发给玩家。
+          <Icon name="key" size={15} /> 请单独发送临时密码。
         </p>
         <button
           className="primary-button"
@@ -1162,7 +1132,7 @@ function ResetPasswordDialog({
   const [error, setError] = useState<string | null>(null);
   return (
     <Modal title={`重置 ${user.displayName} 的密码`} onClose={onClose}>
-      <p>重置会使现有玩家会话失效，并要求下次登录修改临时密码。</p>
+      <p className="sheet-safety">重置后现有会话失效，下次登录必须修改密码。</p>
       {error && <ErrorBox>{error}</ErrorBox>}
       <form
         className="sheet-form"
@@ -1259,7 +1229,7 @@ function RoomPlayersDialog({
           className="secondary-button"
           onClick={() => navigate(`/room/${room.id}?view=public`)}
         >
-          <Icon name="eye" size={16} /> 旁观牌桌
+          <Icon name="eye" size={16} /> 旁观
         </button>
         <button
           className="secondary-button"
@@ -1271,13 +1241,11 @@ function RoomPlayersDialog({
               body: JSON.stringify({}),
             })
               .then((membership) => navigate(`/room/${membership.roomId}`))
-              .catch((caught) =>
-                onError(caught instanceof Error ? caught.message : '无法以玩家身份加入'),
-              )
+              .catch((caught) => onError(caught instanceof Error ? caught.message : '加入牌桌失败'))
               .finally(() => setPending(false));
           }}
         >
-          <Icon name="play" size={16} /> 以玩家身份加入并进入
+          <Icon name="play" size={16} /> 以玩家身份加入
         </button>
       </div>
       <form
@@ -1297,7 +1265,7 @@ function RoomPlayersDialog({
         }}
       >
         <label className="field">
-          <span>把账号加入房间</span>
+          <span>添加玩家</span>
           <select
             value={userId}
             onChange={(event) => setUserId(event.target.value)}
@@ -1320,13 +1288,13 @@ function RoomPlayersDialog({
           />
         </label>
         <button className="primary-button" disabled={!userId || pending}>
-          <Icon name="plus" size={16} /> 加入房间
+          <Icon name="plus" size={16} /> 添加
         </button>
       </form>
       <div className="room-player-list">
         {loading && (
           <div className="empty-state" role="status">
-            正在载入房间成员…
+            正在加载玩家…
           </div>
         )}
         {!loading &&
@@ -1368,25 +1336,23 @@ function RoomPlayersDialog({
                       className="danger-link"
                       disabled={pending}
                       onClick={() => {
-                        if (window.confirm(`确定把 ${player.nickname} 移出房间？`))
+                        if (window.confirm(`确定将 ${player.nickname} 移出牌桌？`))
                           void mutate(
                             `/api/admin/rooms/${room.id}/players/${player.playerId}/kick`,
                             {
-                              reason: '开桌人移出牌桌',
+                              reason: '管理员移出牌桌',
                             },
                           );
                       }}
                     >
-                      <Icon name="door" size={15} /> 踢出
+                      <Icon name="door" size={15} /> 移出
                     </button>
                   )}
                 </span>
               </article>
             );
           })}
-        {!loading && players.length === 0 && (
-          <div className="empty-state">这个房间还没有账号成员。</div>
-        )}
+        {!loading && players.length === 0 && <div className="empty-state">暂无玩家</div>}
       </div>
       {chipPlayer && (
         <ChipDialog
@@ -1415,12 +1381,11 @@ function ChipDialog({
   onSubmit: (stack: number, reason: string) => Promise<boolean>;
 }) {
   const [stack, setStack] = useState(player.stack);
-  const [reason, setReason] = useState('线下筹码校准');
+  const [reason, setReason] = useState('筹码校准');
   const [pending, setPending] = useState(false);
   const [error, setError] = useState<string | null>(null);
   return (
     <Modal title={`调整 ${player.nickname} 的筹码`} onClose={onClose}>
-      <p>按桌面上的实际筹码填写，保存后会马上同步到牌桌。</p>
       {error && <ErrorBox onClose={() => setError(null)}>{error}</ErrorBox>}
       <form
         className="sheet-form"
@@ -1477,7 +1442,7 @@ function CreateRoomDialog({
   onCreate: (body: Record<string, unknown>) => Promise<void>;
 }) {
   const [mode, setMode] = useState<RoomMode>('LIVE');
-  const [name, setName] = useState('周末好友桌');
+  const [name, setName] = useState('周末牌桌');
   const [smallBlind, setSmallBlind] = useState(10);
   const [bigBlind, setBigBlind] = useState(20);
   const [stack, setStack] = useState(2_000);
@@ -1510,11 +1475,11 @@ function CreateRoomDialog({
         maxPlayers: 6,
       },
     })
-      .catch((caught) => setError(caught instanceof Error ? caught.message : '创建房间失败'))
+      .catch((caught) => setError(caught instanceof Error ? caught.message : '创建牌桌失败'))
       .finally(() => setPending(false));
   };
   return (
-    <Modal title="开一张新桌" onClose={onClose}>
+    <Modal title="新建牌桌" onClose={onClose}>
       <form className="sheet-form" onSubmit={submit}>
         {error && <ErrorBox onClose={() => setError(null)}>{error}</ErrorBox>}
         <div className="mode-choice">
@@ -1530,12 +1495,12 @@ function CreateRoomDialog({
                 <Icon name={item === 'ONLINE' ? 'cards' : 'table'} size={23} />
               </b>
               <span>{item === 'ONLINE' ? '线上牌桌' : '线下牌桌'}</span>
-              <small>{item === 'ONLINE' ? '完整线上发牌' : '现场牌＋数字筹码'}</small>
+              <small>{item === 'ONLINE' ? '自动发牌与结算' : '实体牌＋数字筹码'}</small>
             </button>
           ))}
         </div>
         <label className="field">
-          <span>房间名称</span>
+          <span>牌桌名称</span>
           <input
             value={name}
             onChange={(event) => setName(event.target.value)}
@@ -1582,9 +1547,9 @@ function CreateRoomDialog({
             />
           </label>
         </div>
-        <p className="sheet-safety">房间第一手开始后规则锁定，模式无法切换。</p>
+        <p className="sheet-safety">开始后不可修改规则或模式。</p>
         <button className="primary-button" disabled={!valid || pending}>
-          {pending ? '正在创建…' : '创建并生成邀请'}
+          {pending ? '正在创建…' : '创建牌桌'}
         </button>
       </form>
     </Modal>
@@ -1605,7 +1570,7 @@ function JoinPage({ token }: { token: string }) {
         setPreview(room);
         setSession(user);
       })
-      .catch((caught) => setError(caught instanceof Error ? caught.message : '邀请无效'));
+      .catch((caught) => setError(caught instanceof Error ? caught.message : '邀请链接无效'));
   }, [token]);
   if (!preview && !error) return <Loading label="正在打开牌桌邀请…" />;
   if (!preview) {
@@ -1623,7 +1588,7 @@ function JoinPage({ token }: { token: string }) {
       <header className="invite-header page-container">
         <Brand compact />
         <span className="secure-pill">
-          <Icon name="spark" size={14} /> 朋友邀请
+          <Icon name="copy" size={14} /> 牌桌邀请
         </span>
       </header>
       <section className="invite-card">
@@ -1648,36 +1613,6 @@ function JoinPage({ token }: { token: string }) {
             ),
           )}
         </div>
-        <div className="invite-rules">
-          <h2>这桌怎么玩</h2>
-          <ul>
-            <li>
-              <span>
-                <Icon name="check" size={15} />
-              </span>
-              <p>
-                <strong>人齐再开牌</strong>每手开始前，桌上玩家一起点准备。
-              </p>
-            </li>
-            <li>
-              <span>
-                <Icon name="check" size={15} />
-              </span>
-              <p>
-                <strong>{preview.mode === 'ONLINE' ? '自动发牌和比牌' : '实体牌配数字筹码'}</strong>
-                下注顺序和底池都由网站处理。
-              </p>
-            </li>
-            <li>
-              <span>
-                <Icon name="check" size={15} />
-              </span>
-              <p>
-                <strong>位置每手顺时针轮换</strong>轮到谁、该下多少都会清楚显示。
-              </p>
-            </li>
-          </ul>
-        </div>
         {error && <ErrorBox onClose={() => setError(null)}>{error}</ErrorBox>}
         {!session ? (
           <InviteSignIn onSignedIn={setSession} />
@@ -1685,8 +1620,7 @@ function JoinPage({ token }: { token: string }) {
           <div className="join-account-gate">
             <Icon name="key" size={20} />
             <div>
-              <strong>请先完成首次密码修改</strong>
-              <p>为了保护账号，修改临时密码后才能加入牌桌。</p>
+              <strong>请先修改初始密码</strong>
             </div>
             <button className="primary-button" onClick={() => navigate('/')}>
               去修改密码
@@ -1703,14 +1637,16 @@ function JoinPage({ token }: { token: string }) {
                 body: JSON.stringify({}),
               })
                 .then((joined) => navigate(`/room/${joined.roomId}`))
-                .catch((caught) => setError(caught instanceof Error ? caught.message : '加入失败'))
+                .catch((caught) =>
+                  setError(caught instanceof Error ? caught.message : '加入牌桌失败'),
+                )
                 .finally(() => setPending(false));
             }}
           >
             <div className="joining-as">
               <span className="avatar">{session.displayName.slice(0, 1)}</span>
               <span>
-                <small>将以此账号加入</small>
+                <small>当前账号</small>
                 <strong>
                   {session.displayName} · @{session.username}
                 </strong>
@@ -1749,8 +1685,7 @@ function InviteSignIn({ onSignedIn }: { onSignedIn: (session: UserSession) => vo
       <div className="signin-callout">
         <Icon name="user" size={19} />
         <span>
-          <strong>登录后接受邀请</strong>
-          <small>房间成员与账号绑定，不再使用临时昵称或恢复码。</small>
+          <strong>登录后加入牌桌</strong>
         </span>
       </div>
       {error && <ErrorBox>{error}</ErrorBox>}
@@ -1821,10 +1756,10 @@ function RoomPage({ roomId }: { roomId: string }) {
     if (!ok) return;
     if (event === 'seat.claim') {
       const seat = typeof payload.seat === 'number' ? payload.seat + 1 : null;
-      setNotice(seat ? `已坐到 ${seat} 号位` : '座位已选好');
+      setNotice(seat ? `已选择 ${seat} 号位` : '座位已选择');
     } else if (event === 'player.ready') setNotice('下一手已准备');
-    else if (event === 'player.sitOut') setNotice('下一手先休息');
-    else if (event === 'stack.topUp') setNotice('筹码已补至房间上限');
+    else if (event === 'player.sitOut') setNotice('下一手暂离');
+    else if (event === 'stack.topUp') setNotice('筹码已补至牌桌上限');
     else if (event === 'hand.act') {
       const action = payload.action as PlayerAction | undefined;
       const amountTo = typeof payload.amountTo === 'number' ? payload.amountTo : undefined;
@@ -1853,7 +1788,7 @@ function RoomPage({ roomId }: { roomId: string }) {
       setHistoryStatus('ready');
     } catch (caught) {
       setHistoryStatus('error');
-      setHistoryError(caught instanceof Error ? caught.message : '牌谱没有加载出来');
+      setHistoryError(caught instanceof Error ? caught.message : '牌谱加载失败');
     }
   };
 
@@ -1861,9 +1796,9 @@ function RoomPage({ roomId }: { roomId: string }) {
   if (!room) {
     return (
       <main className="state-page">
-        <ErrorBox>{connection.error ?? '没能打开这张牌桌，请回到首页再试一次。'}</ErrorBox>
+        <ErrorBox>{connection.error ?? '牌桌加载失败'}</ErrorBox>
         <button className="secondary-button" onClick={() => navigate('/')}>
-          <Icon name="arrow-left" size={16} /> 返回我的房间
+          <Icon name="arrow-left" size={16} /> 返回牌桌大厅
         </button>
       </main>
     );
@@ -1872,16 +1807,9 @@ function RoomPage({ roomId }: { roomId: string }) {
     return (
       <main className="state-page">
         <Icon name="lock" size={32} />
-        <h1>
-          {connection.error === '你已被移出该房间' ? '你已离开这张牌桌' : '你还没加入这张牌桌'}
-        </h1>
-        <p>
-          {connection.error === '你已被移出该房间'
-            ? '回到首页看看其他牌桌，或让朋友再发一次邀请。'
-            : '请从“我的牌桌”进入，或让开桌的朋友发一个邀请。'}
-        </p>
+        <h1>{connection.error === '你已被移出牌桌' ? '你已被移出牌桌' : '尚未加入牌桌'}</h1>
         <button className="primary-button" onClick={() => navigate('/')}>
-          <Icon name="arrow-left" size={16} /> 返回我的房间
+          <Icon name="arrow-left" size={16} /> 返回牌桌大厅
         </button>
       </main>
     );
@@ -1917,7 +1845,7 @@ function RoomPage({ roomId }: { roomId: string }) {
       <header className="table-header">
         <IconButton
           icon="arrow-left"
-          label="返回我的房间"
+          label="返回牌桌大厅"
           onClick={() => navigate('/')}
           className="round-button"
         />
@@ -1994,7 +1922,7 @@ function RoomPage({ roomId }: { roomId: string }) {
             onClaim={(seat) => void claimSeat(seat)}
           />
           <div className="room-message">
-            <span>{friendlyRoomMessage(room.message)}</span>
+            <span>{roomMessage(room.message)}</span>
             {room.nextHandAt && <b>{seconds} 秒后进入下一阶段</b>}
           </div>
           <RecentActions actions={enhancedRoom.recentActions ?? []} />
@@ -2010,7 +1938,7 @@ function RoomPage({ roomId }: { roomId: string }) {
                   <Icon name="check" size={19} />
                 </span>
                 <small>
-                  {readyEligibleCount < 2 ? '等朋友入座' : mySeat?.ready ? '已准备' : '准备下一手'}
+                  {readyEligibleCount < 2 ? '等待玩家' : mySeat?.ready ? '已准备' : '准备下一手'}
                 </small>
               </button>
               <button
@@ -2020,7 +1948,7 @@ function RoomPage({ roomId }: { roomId: string }) {
                 <span>
                   <Icon name="pause" size={19} />
                 </span>
-                <small>下手休息</small>
+                <small>下一手暂离</small>
               </button>
               <button
                 onClick={() => void send('stack.topUp', { targetStack: room.settings.stackCap })}
@@ -2042,11 +1970,7 @@ function RoomPage({ roomId }: { roomId: string }) {
         <section className="operation-column">
           <fieldset className="command-surface" disabled={connection.busy || frozen}>
             {publicView || !me ? (
-              <WaitingPanel
-                icon="eye"
-                title="正在旁观"
-                text="这里可以看牌桌进度，但不会看到任何人的底牌，也不能代替玩家操作。"
-              />
+              <WaitingPanel icon="eye" title="正在旁观" />
             ) : room.status === 'LOBBY' || room.status === 'BETWEEN_HANDS' ? (
               <ReadyConfirmation
                 room={enhancedRoom}
@@ -2142,7 +2066,7 @@ function PokerTable({
             <strong key={totalPot} className="chip-pop">
               {formatPoints(totalPot)}
             </strong>
-            <span>{room.pots.length > 1 ? `${room.pots.length} 个池` : '积分'}</span>
+            <span>{room.pots.length > 1 ? `${room.pots.length} 个池` : '筹码'}</span>
           </div>
           {room.mode === 'ONLINE' ? (
             <>
@@ -2177,8 +2101,10 @@ function PokerTable({
               <small>现场牌面为准</small>
               <strong>
                 {room.pendingLiveStreet
-                  ? `等待确认 ${room.pendingLiveStreet}`
-                  : (room.phase ?? '等待准备')}
+                  ? `等待确认${phaseLabel[room.pendingLiveStreet] ?? room.pendingLiveStreet}`
+                  : room.phase
+                    ? (phaseLabel[room.phase] ?? room.phase)
+                    : '等待准备'}
               </strong>
             </div>
           )}
@@ -2319,20 +2245,13 @@ function OnlineActions({
   const minimum = prompt?.minRaiseTo ?? prompt?.minBetTo ?? 0;
   const [amountInput, setAmountInput] = useState(String(minimum));
   useEffect(() => setAmountInput(String(minimum)), [minimum, room.serverSeq]);
-  if (room.status !== 'ACTIVE')
-    return (
-      <WaitingPanel
-        icon="check"
-        title="等待下一手"
-        text="所有在线在座玩家确认后，系统才会开始下一手。"
-      />
-    );
+  if (room.status !== 'ACTIVE') return <WaitingPanel icon="check" title="等待下一手" />;
   if (!isMyTurn || !prompt)
     return (
       <WaitingPanel
         icon="clock"
         title="等待其他玩家行动"
-        text={friendlyRoomMessage(room.message) || '牌桌状态会实时更新。'}
+        text={roomMessage(room.message) || undefined}
       />
     );
   const actions = new Set(prompt.legalActions);
@@ -2353,7 +2272,6 @@ function OnlineActions({
     <section className="operation-panel online-panel">
       <div className="operation-head">
         <div>
-          <span className="eyebrow">轮到你了</span>
           <h2>轮到你行动</h2>
         </div>
         <span className="turn-timer">
@@ -2376,9 +2294,9 @@ function OnlineActions({
         </span>
       </div>
       <div className="call-summary">
-        <span>需要跟注</span>
+        <span>需跟注</span>
         <strong>{formatPoints(prompt.callAmount)}</strong>
-        <small>超时可过牌则自动过牌，否则弃牌</small>
+        <small>超时：自动过牌或弃牌</small>
       </div>
       {wagerAction && minimum <= prompt.maxTo && (
         <div className="raise-control">
@@ -2435,7 +2353,7 @@ function OnlineActions({
             role={amountValid ? undefined : 'alert'}
           >
             {amountValid
-              ? '这里填写本轮累计投入，不是本次额外增加的筹码。'
+              ? '金额为本轮累计投入。'
               : `请输入 ${formatPoints(minimum)} 至 ${formatPoints(prompt.maxTo)} 之间的整数。`}
           </small>
         </div>
@@ -2483,7 +2401,7 @@ function WaitingPanel({
 }: {
   icon?: IconName;
   title: string;
-  text: string;
+  text?: string;
 }) {
   return (
     <section className="operation-panel waiting-panel-real">
@@ -2491,7 +2409,7 @@ function WaitingPanel({
         <Icon name={icon} size={27} />
       </span>
       <h2>{title}</h2>
-      <p>{text}</p>
+      {text && <p>{text}</p>}
     </section>
   );
 }
@@ -2521,8 +2439,7 @@ function ReadyConfirmation({
           <Icon name="check" size={22} />
         </span>
         <div>
-          <span className="eyebrow">人齐再开 · 每手确认</span>
-          <h2>准备开始下一手</h2>
+          <h2>准备下一手</h2>
         </div>
         <strong>
           {ready}
@@ -2541,16 +2458,16 @@ function ReadyConfirmation({
             <span className="mini-avatar">{seat.nickname?.slice(0, 1)}</span>
             <span>
               <strong>{seat.nickname}</strong>
-              <small>{seat.ready ? '已准备' : '还没准备'}</small>
+              <small>{seat.ready ? '已准备' : '未准备'}</small>
             </span>
             <Icon name={seat.ready ? 'check' : 'clock'} size={17} />
           </li>
         ))}
       </ul>
       {!enoughPlayers ? (
-        <p className="waiting-names">至少两人才能开牌，再等一位朋友入座。</p>
+        <p className="waiting-names">至少需要 2 名玩家</p>
       ) : waiting.length > 0 ? (
-        <p className="waiting-names">还等 {waiting.map((seat) => seat.nickname).join('、')} 准备</p>
+        <p className="waiting-names">等待 {waiting.map((seat) => seat.nickname).join('、')} 准备</p>
       ) : null}
       {mySeat ? (
         <button
@@ -2564,10 +2481,10 @@ function ReadyConfirmation({
           onClick={onReady}
         >
           <Icon name="check" size={18} />{' '}
-          {!enoughPlayers ? '等朋友入座' : mySeat.ready ? '你准备好了，等等朋友' : '我准备好了'}
+          {!enoughPlayers ? '等待玩家' : mySeat.ready ? '已准备' : '准备下一手'}
         </button>
       ) : (
-        <p className="sheet-safety">先在牌桌选个空位，坐下后就能一起准备。</p>
+        <p className="sheet-safety">请先选择座位</p>
       )}
     </section>
   );
@@ -2576,12 +2493,11 @@ function ReadyConfirmation({
 function RecentActions({ actions }: { actions: TableActionItem[] }) {
   if (!actions.length) return null;
   return (
-    <section className="recent-actions" aria-label="本手最近行动">
+    <section className="recent-actions" aria-label="本手行动">
       <header>
         <span>
-          <Icon name="history" size={14} /> 本手最近行动
+          <Icon name="history" size={14} /> 本手行动
         </span>
-        <small>最新在上</small>
       </header>
       {[...actions]
         .slice(-4)
@@ -2727,7 +2643,7 @@ function MobileActionDock({
               role={valid ? undefined : 'alert'}
             >
               {valid
-                ? '金额表示本轮累计投入。'
+                ? '金额为本轮累计投入。'
                 : `请输入 ${formatPoints(minimum)} 至 ${formatPoints(prompt.maxTo)} 之间的整数。`}
             </small>
             <button
@@ -2780,21 +2696,24 @@ function LiveActions({
 }) {
   const proposal = room.liveResultProposal;
   const eligible = room.pots.some((pot) => pot.eligiblePlayerIds.includes(meId));
+  const eligiblePlayerCount = new Set(room.pots.flatMap((pot) => pot.eligiblePlayerIds)).size;
   const objected = (proposal?.objectedByPlayerIds.length ?? 0) > 0;
   const confirmationRound = !objected && (proposal?.confirmedByPlayerIds.length ?? 0) > 0;
+  const pendingStreet = room.pendingLiveStreet
+    ? (phaseLabel[room.pendingLiveStreet] ?? room.pendingLiveStreet)
+    : null;
   if (room.status === 'DISPUTED') {
-    return (
-      <WaitingPanel title="这手先暂停" text="结果还没商量好，请联系开桌的朋友处理后再继续。" />
-    );
+    return <WaitingPanel title="结果存在异议，本手已暂停" />;
   }
   return (
     <section className="operation-panel live-panel real-live-panel">
       <div className="operation-head">
         <div>
-          <span className="eyebrow">线下牌桌</span>
-          <h2>现场操作台</h2>
+          <h2>线下牌局</h2>
         </div>
-        <span className="phase-tag">{room.phase ?? room.status}</span>
+        <span className="phase-tag">
+          {room.phase ? (phaseLabel[room.phase] ?? room.phase) : statusLabel[room.status]}
+        </span>
       </div>
       {room.pendingLiveStreet && (
         <article className="live-task">
@@ -2802,13 +2721,11 @@ function LiveActions({
             <Icon name="cards" size={21} />
           </span>
           <div>
-            <small>下注轮已结束</small>
-            <h3>请在线下发出 {room.pendingLiveStreet}</h3>
-            <p>确认后才会启动下一轮行动计时。</p>
+            <h3>请发出{pendingStreet}</h3>
           </div>
           {isDealer ? (
             <button className="primary-button" onClick={() => onStreet(room.pendingLiveStreet!)}>
-              已发 {room.pendingLiveStreet}
+              确认已发{pendingStreet}
             </button>
           ) : (
             <em>等待发牌确认人</em>
@@ -2821,9 +2738,7 @@ function LiveActions({
             <Icon name="table" size={21} />
           </span>
           <div>
-            <small>摊牌</small>
-            <h3>分别提交各底池赢家</h3>
-            <p>系统只允许选择该底池仍有资格的玩家。</p>
+            <h3>提交底池赢家</h3>
           </div>
           {isDealer ? (
             <button className="primary-button" onClick={onPropose}>
@@ -2837,10 +2752,10 @@ function LiveActions({
       {proposal && (
         <article className="proposal-card real-proposal">
           <div className="proposal-top">
-            <span>结果提议</span>
+            <span>结果确认</span>
             <small>
               {objected
-                ? '已有异议'
+                ? '已提出异议'
                 : confirmationRound
                   ? '等待全员确认'
                   : seconds > 0
@@ -2877,14 +2792,16 @@ function LiveActions({
             )}
           </div>
           {confirmationRound && (
-            <p>{proposal.confirmedByPlayerIds.length} 人已确认；所有有资格玩家确认后立即结算。</p>
+            <p>
+              已确认 {proposal.confirmedByPlayerIds.length}/{eligiblePlayerCount}
+            </p>
           )}
         </article>
       )}
       {!room.pendingLiveStreet && room.phase !== 'SHOWDOWN' && !proposal && (
         <WaitingPanel
           title={room.status === 'ACTIVE' ? '现场手牌进行中' : '等待玩家准备'}
-          text={friendlyRoomMessage(room.message) || '网站记录下注和筹码，实体牌面以现场为准。'}
+          text={roomMessage(room.message) || undefined}
         />
       )}
     </section>
@@ -2955,7 +2872,7 @@ function LiveWinnerDialog({
             .finally(() => setPending(false));
         }}
       >
-        {pending ? '正在提交…' : '提交并开始 10 秒异议期'}
+        {pending ? '正在提交…' : '提交结果'}
       </button>
     </Modal>
   );
@@ -3000,27 +2917,20 @@ function HistoryDialog({
   const streetOrder = ['PREFLOP', 'FLOP', 'TURN', 'RIVER', 'SHOWDOWN'] as const;
   const visibleItems = items.slice(0, visibleCount);
   return (
-    <Modal title="牌谱" className="history-modal" onClose={onClose}>
-      <div className="history-intro">
-        <span className="history-intro__mark">
-          <Icon name="book" size={19} />
-        </span>
-        <span className="history-intro__copy">
-          <strong>牌局回放</strong>
-          <small>点开任意一手，逐街回看每次行动</small>
-        </span>
-        <b className="history-intro__count">{items.length} 手</b>
-      </div>
+    <Modal
+      title={status === 'ready' ? `牌谱 · ${items.length} 手` : '牌谱'}
+      className="history-modal"
+      onClose={onClose}
+    >
       {status === 'loading' && (
         <div className="history-state" role="status">
           <span className="loader" />
-          <strong>正在整理牌谱</strong>
-          <small>赢家、底池和每次行动马上就好。</small>
+          <strong>正在加载牌谱</strong>
         </div>
       )}
       {status === 'error' && (
         <div className="history-state history-state--error">
-          <ErrorBox>{error ?? '牌谱没有加载出来'}</ErrorBox>
+          <ErrorBox>{error ?? '牌谱加载失败'}</ErrorBox>
           <button className="secondary-button" onClick={onRetry}>
             <Icon name="refresh" size={16} /> 再试一次
           </button>
@@ -3159,9 +3069,7 @@ function HistoryDialog({
                           </section>
                         );
                       })}
-                      {actions.length === 0 && (
-                        <p className="empty-state">这一手还没有可以回看的行动。</p>
-                      )}
+                      {actions.length === 0 && <p className="empty-state">本手暂无行动</p>}
                     </div>
                   </div>
                 )}
@@ -3175,8 +3083,7 @@ function HistoryDialog({
               <i />
               <Icon name="spade" size={21} />
             </span>
-            <strong>第一手还没打完</strong>
-            <small>结算后，赢家、底池和每次下注都会自动整理到这里。</small>
+            <strong>暂无已结算牌局</strong>
           </div>
         )}
       </div>
@@ -3186,7 +3093,7 @@ function HistoryDialog({
           className="secondary-button history-load-more"
           onClick={() => setVisibleCount((count) => Math.min(items.length, count + 20))}
         >
-          再显示 {Math.min(20, items.length - visibleCount)} 手
+          加载更多（{Math.min(20, items.length - visibleCount)} 手）
         </button>
       )}
     </Modal>

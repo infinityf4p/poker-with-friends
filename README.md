@@ -65,7 +65,7 @@ docker compose ps
 - `MINOR`：向后兼容的新功能或迁移；
 - `PATCH`：向后兼容的修复。
 
-生产镜像应使用不可变的 Git 提交 SHA 或发布标签，不建议使用浮动的 `latest` 作为回滚依据。每个公开版本必须通过 CI、容器构建、密钥扫描和 CodeQL，并附带迁移与回滚说明。发布流程见 [公开发布清单](./docs/PUBLIC_RELEASE_CHECKLIST.md)，当前版本说明见 [v0.4.0](./docs/releases/v0.4.0.md)。
+生产镜像应使用不可变的 Git 提交 SHA 或发布标签，不建议使用浮动的 `latest` 作为回滚依据。每个公开版本必须通过 CI、容器构建、密钥扫描和 CodeQL，并附带迁移与回滚说明。发布流程见 [公开发布清单](./docs/PUBLIC_RELEASE_CHECKLIST.md)，当前版本说明见 [v0.4.1](./docs/releases/v0.4.1.md)。
 
 ## 许可证
 

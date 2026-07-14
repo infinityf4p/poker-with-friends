@@ -39,12 +39,12 @@ describe('api error messages', () => {
     });
   });
 
-  it('keeps the status fallback for malformed error responses', async () => {
+  it('uses a concise fallback for malformed error responses', async () => {
     rejectWith({ error: 'BAD_REQUEST' });
 
     await expect(api('/api/admin/users')).rejects.toMatchObject({
       status: 400,
-      message: '请求失败 (400)',
+      message: '请求失败，请重试',
     });
   });
 });

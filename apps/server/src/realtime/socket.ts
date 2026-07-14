@@ -43,7 +43,7 @@ const badRequest = (message: string): CommandFailure => ({
 const commandBusy = (): CommandFailure => ({
   ok: false,
   code: 'CONFLICT',
-  message: '操作过于频繁，请等待前面的命令完成',
+  message: '操作过于频繁，请稍候',
 });
 
 export function registerSocketServer(app: FastifyInstance, deps: SocketDependencies): Server {
@@ -112,7 +112,7 @@ export function registerSocketServer(app: FastifyInstance, deps: SocketDependenc
         { failure: safeErrorLogContext(error), roomId, playerId },
         'socket room recovery failed',
       );
-      socket.emit('room.error', { code: 'ROOM_FROZEN', message: '牌局恢复失败，禁止继续行动' });
+      socket.emit('room.error', { code: 'ROOM_FROZEN', message: '牌局恢复失败，已暂停' });
       socket.disconnect(true);
       return;
     }
@@ -145,7 +145,7 @@ export function registerSocketServer(app: FastifyInstance, deps: SocketDependenc
             },
             'socket command failed',
           );
-          result = { ok: false, code: 'INTERNAL_ERROR', message: '服务器暂时无法处理操作' };
+          result = { ok: false, code: 'INTERNAL_ERROR', message: '操作失败，请重试' };
         } finally {
           commandsInFlight -= 1;
         }

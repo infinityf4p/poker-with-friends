@@ -72,7 +72,7 @@ export const phaseLabel: Record<string, string> = {
 };
 
 export const statusLabel: Record<string, string> = {
-  LOBBY: '等朋友入座',
+  LOBBY: '等待入座',
   ACTIVE: '牌局进行中',
   BETWEEN_HANDS: '准备下一手',
   DISPUTED: '本手暂停',
@@ -166,7 +166,7 @@ export function positionLabel(positions: TablePosition[]): string {
 
 export function actingCopy(room: EnhancedRoomProjection, seconds: number): string {
   if (room.actingSeat === null)
-    return room.nextHandAt ? `${seconds} 秒后开始下一手` : '等大家准备好，再开下一手';
+    return room.nextHandAt ? `${seconds} 秒后开始下一手` : '等待玩家准备';
   const seat = room.seats[room.actingSeat];
   if (!seat?.playerId) return '等待下一位玩家';
   const positions = positionsForRoom(room).get(seat.seat) ?? [];
@@ -175,18 +175,18 @@ export function actingCopy(room: EnhancedRoomProjection, seconds: number): strin
 }
 
 const legacyRoomMessages = new Map([
-  ['在线阵容发生变化，请所有在座玩家重新确认下一手', '桌上有人进出，大家重新点一下准备'],
-  ['阵容发生变化，请其余玩家重新确认下一手', '桌上阵容有变化，大家重新点一下准备'],
-  ['筹码发生变化，请所有玩家重新确认下一手', '筹码刚刚有变动，大家重新点一下准备'],
-  ['争议超过 120 秒，房间已冻结；管理员只能退款中止', '结果还没商量好，这一手先暂停'],
+  ['在线阵容发生变化，请所有在座玩家重新确认下一手', '牌桌成员已变化，请重新准备'],
+  ['阵容发生变化，请其余玩家重新确认下一手', '牌桌成员已变化，请重新准备'],
+  ['筹码发生变化，请所有玩家重新确认下一手', '筹码已变化，请重新准备'],
+  ['争议超过 120 秒，房间已冻结；管理员只能退款中止', '结果存在异议，本手已暂停'],
 ]);
 
-export function friendlyRoomMessage(message: string | null | undefined): string {
+export function roomMessage(message: string | null | undefined): string {
   if (!message) return '';
   const known = legacyRoomMessages.get(message);
   if (known) return known;
   const removedPlayer = message.match(/^(.+) 已被管理员移出牌桌，请重新确认下一手$/);
-  return removedPlayer ? `${removedPlayer[1]} 已离开牌桌，大家重新点一下准备` : message;
+  return removedPlayer ? `${removedPlayer[1]} 已离开牌桌，请重新准备` : message;
 }
 
 function clampAmount(value: number, minimum: number, maximum: number, step: number): number {

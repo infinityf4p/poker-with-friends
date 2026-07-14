@@ -788,7 +788,7 @@ describeWithDatabase('real HTTP + Socket.IO three-player table flow', () => {
 
     expect(results.filter((result) => result.status === 201)).toHaveLength(6);
     expect(results.filter((result) => result.status === 409)).toEqual([
-      expect.objectContaining({ body: { error: 'ROOM_FULL', message: '房间已满' } }),
+      expect.objectContaining({ body: { error: 'ROOM_FULL', message: '牌桌已满' } }),
     ]);
   }, 30_000);
 });

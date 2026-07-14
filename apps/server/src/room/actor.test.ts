@@ -194,8 +194,10 @@ describe('RoomActor', () => {
     const repository = new FakeRepository();
     const actor = new RoomActor(loaded, repository as unknown as PokerRepository, () => undefined);
     const player = actor.state.players[0]!;
+    const initialMessage = actor.state.message;
 
     await actor.setConnected(player.id, true);
+    expect(actor.state.message).toBe(initialMessage);
     const result = await actor.seatClaim(player.id, {
       commandId: randomUUID(),
       expectedSeq: actor.state.serverSeq,
@@ -203,6 +205,7 @@ describe('RoomActor', () => {
     });
 
     expect(result.ok).toBe(true);
+    expect(actor.state.message).toBe(initialMessage);
     expect(actor.snapshot(player.id).private?.seat).toBe(3);
     expect(actor.snapshot(player.id).public.seats[3]).toMatchObject({
       playerId: player.id,
