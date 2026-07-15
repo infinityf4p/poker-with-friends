@@ -12,7 +12,7 @@
   },
   "dependencies": {
     "@poker-with-friends/protocol": "workspace:*",
-    "@vitejs/plugin-react": "^4.3.4",
+    "@vitejs/plugin-react": "^6.0.3",
     "vite": "^6.4.3",
     "typescript": "^5.7.3",
     "react": "^18.3.1",
