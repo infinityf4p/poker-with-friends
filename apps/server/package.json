@@ -21,7 +21,7 @@
     "@poker-with-friends/engine": "workspace:*",
     "@poker-with-friends/protocol": "workspace:*",
     "argon2": "^0.43.1",
-    "cookie": "^1.0.2",
+    "cookie": "^2.0.1",
     "drizzle-orm": "^0.45.2",
     "fastify": "^5.4.0",
     "socket.io": "^4.8.1",
