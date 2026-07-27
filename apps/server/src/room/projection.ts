@@ -160,6 +160,7 @@ function projectSeat(state: RuntimeRoomState, seat: number): PublicSeat {
     ),
     hasCards: hand?.participantIds.includes(player.id) ?? false,
     ...(revealed ? { revealedCards: hand?.holeCards[player.id] ?? [] } : {}),
+    ...(player.owesBigBlind ? { owesBigBlind: true } : {}),
     positions: positionsBySeat(state).get(seat) ?? [],
   } as PublicSeat;
 }
@@ -222,6 +223,7 @@ export function buildProjections(state: RuntimeRoomState): ProjectionBundle {
     prompt,
     liveResultProposal: liveProposalProjection(hand?.liveProposal ?? null),
     nextHandAt: state.nextHandAt,
+    lastHandSummary: state.lastHandSummary ?? null,
     createdAt: state.createdAt,
     updatedAt: state.updatedAt,
     readyCount: eligibleForNextHand.filter((player) => player.ready).length,

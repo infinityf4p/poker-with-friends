@@ -1,5 +1,5 @@
 import { randomUUID } from 'node:crypto';
-import { getLegalActions } from '@poker-with-friends/engine';
+import { getLegalActions, orderedSeatsAfter } from '@poker-with-friends/engine';
 import {
   DEFAULT_ROOM_SETTINGS,
   type CommandResult,
@@ -279,7 +279,7 @@ describe('RoomActor', () => {
     const privateCards = actor.snapshot(a.id).private!.holeCards;
     expect(privateCards).toHaveLength(2);
     for (const card of privateCards) {
-      expect(JSON.stringify(actor.snapshot(a.id).public)).not.toContain(card);
+      expect(JSON.stringify(actor.snapshot(a.id).public)).not.toContain(JSON.stringify(card));
     }
     const actorId = hand.betting.actorId!;
     const commandId = randomUUID();
@@ -294,6 +294,15 @@ describe('RoomActor', () => {
     expect(actor.state.status).toBe('BETWEEN_HANDS');
     expect(actor.state.hand?.phase).toBe('SETTLED');
     expect(actor.state.players.reduce((sum, player) => sum + player.stack, 0)).toBe(4_000);
+    expect(actor.state.lastHandSummary).toMatchObject({
+      handNumber: 1,
+      reason: 'UNCONTESTED',
+      // The unmatched half of the big blind is refunded before the pot is
+      // awarded, so only the matched 10 + 10 belongs to the settlement.
+      totalPot: DEFAULT_ROOM_SETTINGS.smallBlind * 2,
+      communityCards: [],
+      winners: [{ amount: DEFAULT_ROOM_SETTINGS.smallBlind * 2 }],
+    });
     expect(actor.state.nextHandAt).toBeNull();
     expect(actor.state.players.every((player) => !player.ready)).toBe(true);
     const commits = repository.commits.length;
@@ -360,6 +369,14 @@ describe('RoomActor', () => {
     await finishCurrentBettingRound(actor);
     expect(actor.state.status).toBe('BETWEEN_HANDS');
     expect(actor.snapshot(folderId).private?.peekCards).toBeUndefined();
+    expect(actor.state.lastHandSummary?.reason).toBe('SHOWDOWN');
+    expect(actor.state.lastHandSummary?.communityCards).toHaveLength(5);
+    expect(actor.state.lastHandSummary?.winners.length).toBeGreaterThan(0);
+    expect(
+      actor.state.lastHandSummary?.winners.every(
+        (winner) => winner.handRankCategory !== undefined && winner.bestCards?.length === 5,
+      ),
+    ).toBe(true);
   });
 
   it('rolls the actor state back when the database transaction fails', async () => {
@@ -434,6 +451,7 @@ describe('RoomActor', () => {
     }
     expect(actor.state.status).toBe('ACTIVE');
     expect(actor.state.handNumber).toBe(2);
+    expect(actor.state.lastHandSummary).toBeNull();
   });
 
   it('projects the exact actor, table positions, and betting shortcut inputs', async () => {
@@ -645,5 +663,212 @@ describe('RoomActor', () => {
     } finally {
       vi.useRealTimers();
     }
+  });
+
+  describe('missed-blind accounting', () => {
+    const extraPlayer = (suffix: string, nickname: string, seat: number) => {
+      const now = new Date();
+      return {
+        id: `00000000-0000-4000-8000-0000000000${suffix}`,
+        roomId: '00000000-0000-4000-8000-000000000001',
+        userId: `00000000-0000-4000-8000-0000000001${suffix}`,
+        nickname,
+        stack: 2_000,
+        seat,
+        ready: false,
+        sittingOut: false,
+        connected: false,
+        membershipStatus: 'ACTIVE' as const,
+        kickedAt: null,
+        kickedByAdminId: null,
+        kickReason: null,
+        lastSeenAt: now,
+        createdAt: now,
+        updatedAt: now,
+      };
+    };
+
+    const command = () => ({
+      commandId: randomUUID(),
+      expectedSeq: 0,
+      payload: {},
+    });
+
+    const readyPlayer = async (actor: RoomActor, playerId: string) => {
+      const result = await actor.ready(playerId, {
+        ...command(),
+        expectedSeq: actor.state.serverSeq,
+      });
+      expect(result.ok).toBe(true);
+    };
+
+    const foldOutHand = async (actor: RoomActor) => {
+      while (actor.state.status === 'ACTIVE' && actor.state.hand) {
+        const hand = actor.state.hand;
+        const result = await actor.act(hand.betting.actorId!, {
+          ...command(),
+          expectedSeq: actor.state.serverSeq,
+          turnToken: hand.turnToken!,
+          payload: { action: 'FOLD' },
+        });
+        expect(result.ok).toBe(true);
+      }
+      expect(actor.state.status).toBe('BETWEEN_HANDS');
+    };
+
+    it('charges a returning player a dead big blind after the blind passed their seat', async () => {
+      const loaded = loadedRoom('ONLINE');
+      loaded.players.push(extraPlayer('13', 'C', 2), extraPlayer('14', 'D', 3));
+      const repository = new FakeRepository();
+      const actor = new RoomActor(
+        loaded,
+        repository as unknown as PokerRepository,
+        () => undefined,
+      );
+      for (const player of actor.state.players) await actor.setConnected(player.id, true);
+      for (const player of actor.state.players) await readyPlayer(actor, player.id);
+      expect(actor.state.status).toBe('ACTIVE');
+
+      // With four seats 0-3 the next hand's button is one seat on, so the
+      // player due to post the next big blind sits two seats after that.
+      const firstHand = actor.state.hand!;
+      const dodgeSeat = (firstHand.buttonSeat + 3) % 4;
+      const dodger = actor.state.players.find((player) => player.seat === dodgeSeat)!;
+      await foldOutHand(actor);
+
+      const sitOut = await actor.sitOut(dodger.id, {
+        ...command(),
+        expectedSeq: actor.state.serverSeq,
+      });
+      expect(sitOut.ok).toBe(true);
+      for (const player of actor.state.players) {
+        if (player.id !== dodger.id) await readyPlayer(actor, player.id);
+      }
+      expect(actor.state.status).toBe('ACTIVE');
+      expect(dodger.owesBigBlind).toBe(true);
+      await foldOutHand(actor);
+
+      // Remaining away for another full hand must not accumulate a second
+      // debt; owesBigBlind is one outstanding obligation, not a counter.
+      for (const player of actor.state.players) {
+        if (player.id !== dodger.id) await readyPlayer(actor, player.id);
+      }
+      expect(actor.state.status).toBe('ACTIVE');
+      expect(dodger.owesBigBlind).toBe(true);
+      await foldOutHand(actor);
+
+      await readyPlayer(actor, dodger.id);
+      for (const player of actor.state.players) {
+        if (player.id !== dodger.id) await readyPlayer(actor, player.id);
+      }
+      expect(actor.state.status).toBe('ACTIVE');
+      const returnHand = actor.state.hand!;
+      expect(returnHand.bigBlindSeat).not.toBe(dodgeSeat);
+      const entry = returnHand.betting.players.find((player) => player.playerId === dodger.id)!;
+      expect(entry.committedHand - entry.committedStreet).toBe(DEFAULT_ROOM_SETTINGS.bigBlind);
+      expect(dodger.owesBigBlind).toBe(false);
+      const startCommit = repository.commits.at(-1)!;
+      expect(
+        startCommit.ledgerMutations?.some(
+          (mutation) => mutation.kind === 'DEAD_BLIND' && mutation.playerId === dodger.id,
+        ),
+      ).toBe(true);
+
+      await foldOutHand(actor);
+      expect(actor.state.players.reduce((sum, player) => sum + player.stack, 0)).toBe(8_000);
+    });
+
+    it('still marks the debt when the big blind stalls as the table collapses to heads-up', async () => {
+      const loaded = loadedRoom('ONLINE');
+      loaded.players.push(extraPlayer('13', 'C', 2));
+      const repository = new FakeRepository();
+      const actor = new RoomActor(
+        loaded,
+        repository as unknown as PokerRepository,
+        () => undefined,
+      );
+      for (const player of actor.state.players) await actor.setConnected(player.id, true);
+      for (const player of actor.state.players) await readyPlayer(actor, player.id);
+
+      // In a 3-player rotation the current button posts the next big blind.
+      const firstHand = actor.state.hand!;
+      const dodger = actor.state.players.find((player) => player.seat === firstHand.buttonSeat)!;
+      await foldOutHand(actor);
+
+      const sitOut = await actor.sitOut(dodger.id, {
+        ...command(),
+        expectedSeq: actor.state.serverSeq,
+      });
+      expect(sitOut.ok).toBe(true);
+      for (const player of actor.state.players) {
+        if (player.id !== dodger.id) await readyPlayer(actor, player.id);
+      }
+      expect(actor.state.status).toBe('ACTIVE');
+      expect(dodger.owesBigBlind).toBe(true);
+    });
+
+    it('marks only the next due big blind when several players sit out', async () => {
+      const loaded = loadedRoom('ONLINE');
+      loaded.players.push(extraPlayer('13', 'C', 2), extraPlayer('14', 'D', 3));
+      const repository = new FakeRepository();
+      const actor = new RoomActor(
+        loaded,
+        repository as unknown as PokerRepository,
+        () => undefined,
+      );
+      for (const player of actor.state.players) await actor.setConnected(player.id, true);
+      for (const player of actor.state.players) await readyPlayer(actor, player.id);
+
+      const firstHand = actor.state.hand!;
+      const seats = firstHand.participantIds.map(
+        (playerId) => actor.state.players.find((player) => player.id === playerId)!.seat!,
+      );
+      const dueSeat = orderedSeatsAfter(seats, firstHand.bigBlindSeat)[0]!;
+      const duePlayer = actor.state.players.find((player) => player.seat === dueSeat)!;
+      const unrelated = actor.state.players.find(
+        (player) => player.id !== duePlayer.id && player.seat !== firstHand.bigBlindSeat,
+      )!;
+      await foldOutHand(actor);
+
+      for (const player of [duePlayer, unrelated]) {
+        const result = await actor.sitOut(player.id, {
+          ...command(),
+          expectedSeq: actor.state.serverSeq,
+        });
+        expect(result.ok).toBe(true);
+      }
+      for (const player of actor.state.players) {
+        if (player.id !== duePlayer.id && player.id !== unrelated.id) {
+          await readyPlayer(actor, player.id);
+        }
+      }
+
+      expect(actor.state.status).toBe('ACTIVE');
+      expect(duePlayer.owesBigBlind).toBe(true);
+      expect(unrelated.owesBigBlind).toBe(false);
+    });
+
+    it('clears the debt without a dead post when the player returns into the natural big blind', async () => {
+      const { actor, repository, a, b } = await readyTable('ONLINE');
+      const firstHand = actor.state.hand!;
+      await foldOutHand(actor);
+      // Heads-up alternates the button, so last hand's button posts the next big blind.
+      const nextBigBlind = [a, b].find((player) => player.seat === firstHand.buttonSeat)!;
+      const runtimePlayer = actor.state.players.find((player) => player.id === nextBigBlind.id)!;
+      runtimePlayer.owesBigBlind = true;
+
+      await readyPlayer(actor, a.id);
+      await readyPlayer(actor, b.id);
+      expect(actor.state.status).toBe('ACTIVE');
+      const hand = actor.state.hand!;
+      expect(hand.bigBlindSeat).toBe(runtimePlayer.seat);
+      const entry = hand.betting.players.find((player) => player.playerId === runtimePlayer.id)!;
+      expect(entry.committedHand).toBe(entry.committedStreet);
+      expect(runtimePlayer.owesBigBlind).toBe(false);
+      const startCommit = repository.commits.at(-1)!;
+      expect(startCommit.ledgerMutations?.some((mutation) => mutation.kind === 'DEAD_BLIND')).toBe(
+        false,
+      );
+    });
   });
 });

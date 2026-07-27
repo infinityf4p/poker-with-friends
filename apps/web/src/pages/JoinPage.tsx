@@ -50,7 +50,9 @@ export function JoinPage({ token }: { token: string }) {
         <dl className="invite-stats">
           <div>
             <dt>人数</dt>
-            <dd>{preview.playerCount}/6</dd>
+            <dd>
+              {preview.playerCount}/{preview.settings.maxPlayers}
+            </dd>
           </div>
           <div>
             <dt>盲注</dt>
@@ -64,14 +66,15 @@ export function JoinPage({ token }: { token: string }) {
           </div>
         </dl>
         <div className="invite-seats">
-          {Array.from({ length: 6 }, (_, index) => preview.nicknames[index] ?? null).map(
-            (name, index) => (
-              <div key={index} className={name ? '' : 'invite-seat-empty'}>
-                <span className="mini-avatar">{name ? name.slice(0, 1) : '+'}</span>
-                <small>{name ?? '空位'}</small>
-              </div>
-            ),
-          )}
+          {Array.from(
+            { length: preview.settings.maxPlayers },
+            (_, index) => preview.nicknames[index] ?? null,
+          ).map((name, index) => (
+            <div key={index} className={name ? '' : 'invite-seat-empty'}>
+              <span className="mini-avatar">{name ? name.slice(0, 1) : '+'}</span>
+              <small>{name ?? '空位'}</small>
+            </div>
+          ))}
         </div>
         {error && <ErrorBox onClose={() => setError(null)}>{error}</ErrorBox>}
         {!session ? (

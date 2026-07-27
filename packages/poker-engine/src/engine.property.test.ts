@@ -52,7 +52,7 @@ describe('engine invariants', () => {
     );
   });
 
-  it('legal betting sequences preserve chips and never produce negative values', () => {
+  it('legal betting sequences preserve chips and build eligible, chip-conserving side pots', () => {
     fc.assert(
       fc.property(
         fc.array(fc.integer({ min: 20, max: 500 }), { minLength: 2, maxLength: 6 }),
@@ -92,6 +92,44 @@ describe('engine invariants', () => {
               state.players.reduce((sum, player) => sum + player.stack + player.committedHand, 0),
             ).toBe(initialTotal);
             expect(state.players.every((player) => player.stack >= 0)).toBe(true);
+          }
+
+          const contributions = state.players.map((player) => ({
+            playerId: player.playerId,
+            amount: player.committedHand,
+            folded: player.folded,
+          }));
+          const build = buildSidePots(contributions);
+          const playersById = new Map(state.players.map((player) => [player.playerId, player]));
+          const totalContributed = contributions.reduce(
+            (sum, contribution) => sum + contribution.amount,
+            0,
+          );
+          const accountedFor =
+            build.pots.reduce((sum, pot) => sum + pot.amount, 0) +
+            build.refunds.reduce((sum, refund) => sum + refund.amount, 0);
+
+          expect(build.totalContributed).toBe(totalContributed);
+          expect(accountedFor).toBe(totalContributed);
+          expect(build.pots.map((pot) => pot.index)).toEqual(build.pots.map((_, index) => index));
+          for (const pot of build.pots) {
+            expect(pot.amount).toBeGreaterThan(0);
+            expect(pot.contributorIds.length).toBeGreaterThanOrEqual(2);
+            expect(pot.eligiblePlayerIds.length).toBeGreaterThan(0);
+            expect(new Set(pot.contributorIds).size).toBe(pot.contributorIds.length);
+            expect(new Set(pot.eligiblePlayerIds).size).toBe(pot.eligiblePlayerIds.length);
+            expect(pot.eligiblePlayerIds).toEqual(
+              pot.contributorIds.filter((playerId) => !playersById.get(playerId)!.folded),
+            );
+            for (const playerId of pot.contributorIds) {
+              expect(playersById.get(playerId)!.committedHand).toBeGreaterThanOrEqual(pot.cap);
+            }
+          }
+          for (const refund of build.refunds) {
+            expect(refund.amount).toBeGreaterThan(0);
+            expect(refund.amount).toBeLessThanOrEqual(
+              playersById.get(refund.playerId)!.committedHand,
+            );
           }
         },
       ),

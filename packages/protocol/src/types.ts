@@ -49,6 +49,8 @@ export interface PublicSeat {
   isActing: boolean;
   hasCards: boolean;
   revealedCards?: Card[];
+  /** Missed the big blind while away; owes a dead big blind on return. */
+  owesBigBlind?: boolean;
 }
 
 export interface PublicActionPrompt {
@@ -76,6 +78,24 @@ export interface LiveResultProposal {
   disputeAt: string;
 }
 
+export interface HandWinnerSummary {
+  playerId: string;
+  nickname: string;
+  seat: number | null;
+  amount: number;
+  /** Engine HandCategory ordinal (0 = high card … 8 = straight flush); showdowns only. */
+  handRankCategory?: number;
+  bestCards?: Card[];
+}
+
+export interface LastHandSummary {
+  handNumber: number;
+  reason: 'UNCONTESTED' | 'SHOWDOWN' | 'LIVE_CONFIRMED';
+  totalPot: number;
+  winners: HandWinnerSummary[];
+  communityCards: Card[];
+}
+
 export interface PublicRoomProjection {
   roomId: string;
   name: string;
@@ -99,6 +119,8 @@ export interface PublicRoomProjection {
   nextHandAt: string | null;
   readyCount: number;
   requiredReadyCount: number;
+  /** Result of the most recently settled hand; null once the next hand starts. */
+  lastHandSummary?: LastHandSummary | null;
   createdAt: string;
   updatedAt: string;
 }

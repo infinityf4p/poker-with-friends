@@ -72,9 +72,15 @@ export function buildSidePots(contributions: readonly PotContribution[]): SidePo
   const caps = [...new Set(positive.map((contribution) => contribution.amount))].sort(
     (left, right) => left - right,
   );
-  const pots: SidePot[] = [];
+  const pots: Array<SidePot & { amount: number }> = [];
   const refunds = new Map<string, number>();
   let previousCap = 0;
+  // Legal betting sequences cannot produce a multi-contributor layer where
+  // every contributor has folded, but this construction must never lose chips
+  // even on impossible input: such a layer's amount is dead money, folded into
+  // the nearest pot that does have a contender.
+  let orphanAmount = 0;
+  const orphanLayers: Array<{ contributorIds: string[]; portion: number }> = [];
 
   for (const cap of caps) {
     const layerContributors = positive.filter((contribution) => contribution.amount >= cap);
@@ -87,17 +93,39 @@ export function buildSidePots(contributions: readonly PotContribution[]): SidePo
         .filter((contribution) => !contribution.folded)
         .map((contribution) => contribution.playerId);
       if (eligiblePlayerIds.length === 0) {
-        throw new RangeError(`pot layer capped at ${cap} has no eligible player`);
+        orphanAmount += layerAmount;
+        orphanLayers.push({
+          contributorIds: layerContributors.map((contribution) => contribution.playerId),
+          portion: cap - previousCap,
+        });
+      } else {
+        pots.push({
+          index: pots.length,
+          cap,
+          amount: layerAmount + orphanAmount,
+          contributorIds: layerContributors.map((contribution) => contribution.playerId),
+          eligiblePlayerIds,
+        });
+        orphanAmount = 0;
+        orphanLayers.length = 0;
       }
-      pots.push({
-        index: pots.length,
-        cap,
-        amount: layerAmount,
-        contributorIds: layerContributors.map((contribution) => contribution.playerId),
-        eligiblePlayerIds,
-      });
     }
     previousCap = cap;
+  }
+
+  if (orphanAmount > 0) {
+    const lastPot = pots[pots.length - 1];
+    if (lastPot) {
+      lastPot.amount += orphanAmount;
+    } else {
+      // Degenerate fallback: no pot anywhere has a contender, so hand the
+      // orphaned layers back to their contributors.
+      for (const layer of orphanLayers) {
+        for (const contributorId of layer.contributorIds) {
+          addAmount(refunds, contributorId, layer.portion);
+        }
+      }
+    }
   }
 
   const refundList = [...refunds.entries()].map(([playerId, amount]) => ({ playerId, amount }));

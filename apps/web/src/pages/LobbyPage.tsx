@@ -168,6 +168,7 @@ export function LobbyPage() {
                 room={room}
                 joining={joiningRoomId === room.roomId}
                 onEnter={() => void enterRoom(room)}
+                onSpectate={() => navigate(`/room/${room.roomId}?view=public`)}
               />
             ))}
             {rooms.length === 0 && (
@@ -190,10 +191,12 @@ function LobbyRoomCard({
   room,
   joining,
   onEnter,
+  onSpectate,
 }: {
   room: LobbyRoomSummary;
   joining: boolean;
   onEnter: () => void;
+  onSpectate: () => void;
 }) {
   const joined = Boolean(room.membership && room.membership.status !== 'KICKED');
   const blocked = room.membership?.status === 'KICKED';
@@ -286,21 +289,33 @@ function LobbyRoomCard({
             <>
               <Icon name="door" size={15} />
               <span>
-                <strong>{full ? '牌桌已满' : '可直接加入'}</strong>
+                <strong>{blocked ? '仅可旁观' : full ? '牌桌已满' : '可加入'}</strong>
               </span>
             </>
           )}
         </span>
-        <button
-          type="button"
-          data-testid={`join-room-${room.roomId}`}
-          className={joined ? 'secondary-button' : 'primary-button'}
-          onClick={onEnter}
-          disabled={joining || blocked || full}
-        >
-          {actionLabel}
-          {!joining && !blocked && !full && <Icon name="arrow-right" size={16} />}
-        </button>
+        <span className="lobby-room-actions">
+          {!joined && (
+            <button
+              type="button"
+              data-testid={`spectate-room-${room.roomId}`}
+              className="secondary-button"
+              onClick={onSpectate}
+            >
+              <Icon name="eye" size={16} /> 旁观
+            </button>
+          )}
+          <button
+            type="button"
+            data-testid={`join-room-${room.roomId}`}
+            className="primary-button"
+            onClick={onEnter}
+            disabled={joining || blocked || full}
+          >
+            {actionLabel}
+            {!joining && !blocked && !full && <Icon name="arrow-right" size={16} />}
+          </button>
+        </span>
       </footer>
     </article>
   );

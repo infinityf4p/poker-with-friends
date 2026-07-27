@@ -57,6 +57,11 @@ export class RoomManager {
     return (await this.actor(roomId)).adminSnapshot();
   }
 
+  /** Spectator view: the public projection only, which never contains hole cards. */
+  public async publicSnapshot(roomId: string): Promise<PublicRoomProjection> {
+    return (await this.actor(roomId)).adminSnapshot();
+  }
+
   public async setConnected(roomId: string, playerId: string, connected: boolean): Promise<void> {
     await (await this.actor(roomId)).setConnected(playerId, connected);
   }
@@ -134,7 +139,9 @@ export class RoomManager {
   }
 
   public async adminArchive(roomId: string, adminId: string): Promise<boolean> {
-    return (await this.actor(roomId)).adminArchive(adminId);
+    const archived = await (await this.actor(roomId)).adminArchive(adminId);
+    if (archived) this.actors.delete(roomId);
+    return archived;
   }
 
   public async adminAdjustStack(
@@ -174,7 +181,9 @@ export class RoomManager {
   }
 
   public async adminForceAbort(roomId: string, adminId: string): Promise<boolean> {
-    return (await this.actor(roomId)).adminForceAbort(adminId);
+    const aborted = await (await this.actor(roomId)).adminForceAbort(adminId);
+    if (aborted) this.actors.delete(roomId);
+    return aborted;
   }
 
   public async archiveIdleRooms(): Promise<number> {
@@ -186,7 +195,12 @@ export class RoomManager {
         room.status === 'ACTIVE' || room.status === 'DISPUTED'
           ? await actor.adminForceAbort('SYSTEM_IDLE_TIMEOUT')
           : await actor.adminArchive('SYSTEM_IDLE_TIMEOUT');
-      if (ok) archived += 1;
+      if (ok) {
+        // Archived actors reject every command; drop them so a long-lived
+        // process does not accumulate one cached actor per finished room.
+        this.actors.delete(room.id);
+        archived += 1;
+      }
     }
     return archived;
   }

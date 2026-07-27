@@ -36,6 +36,25 @@ describe('responsive layout safeguards', () => {
     expect(css).toMatch(/\.login-page\s*\{[^}]*overflow-y:\s*auto/s);
     expect(css).toMatch(/@media\s*\(max-height:\s*700px\)[\s\S]*?place-items:\s*start center/);
   });
+
+  it('wraps multi-winner settlements inside the narrow table width', () => {
+    expect(css).toMatch(/\.settlement-banner\s*\{[^}]*width:\s*min\(86%,\s*460px\)/s);
+    expect(css).toMatch(
+      /\.settlement-banner__winners\s*\{[^}]*display:\s*grid[^}]*grid-template-columns:\s*repeat\(auto-fit,\s*minmax\(88px,\s*1fr\)\)/s,
+    );
+    expect(css).toMatch(
+      /@media\s*\(max-width:\s*640px\)[\s\S]*?\.settlement-banner__winners\s*\{[^}]*grid-template-columns:\s*repeat\(2,\s*minmax\(0,\s*1fr\)\)/,
+    );
+  });
+
+  it('gives both lobby actions the full mobile card width without clipping status text', () => {
+    expect(css).toMatch(
+      /footer:has\(\.lobby-room-actions > button \+ button\)[\s\S]*?\.room-membership-copy\s*\{[^}]*display:\s*none/,
+    );
+    expect(css).toMatch(
+      /footer:has\(\.lobby-room-actions > button \+ button\)\s+\.lobby-room-actions\s*\{[^}]*display:\s*grid[^}]*width:\s*100%[^}]*grid-template-columns:/s,
+    );
+  });
 });
 
 describe('interaction accessibility safeguards', () => {
@@ -46,5 +65,11 @@ describe('interaction accessibility safeguards', () => {
   it('does not animate success messages to invisible before their timer expires', () => {
     expect(css).toMatch(/\.success-box\s*\{[^}]*animation:\s*notice-in/s);
     expect(css).not.toContain('@keyframes fade-notice');
+  });
+
+  it('keeps table preference controls touch-sized on mobile', () => {
+    expect(css).toMatch(
+      /@media\s*\(max-width:\s*640px\)[\s\S]*?\.table-view-controls button\s*\{[^}]*min-height:\s*44px/,
+    );
   });
 });

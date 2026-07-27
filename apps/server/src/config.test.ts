@@ -61,4 +61,20 @@ describe('loadConfig', () => {
       }).NODE_ENV,
     ).toBe('production');
   });
+
+  it('defaults missing-Origin policy to permissive outside production and strict in production', () => {
+    expect(loadConfig(baseEnv).ALLOW_NO_ORIGIN).toBe(true);
+    const production = {
+      ...baseEnv,
+      NODE_ENV: 'production',
+      PUBLIC_ORIGIN: 'https://poker.example.com',
+      COOKIE_SECRET: 'c'.repeat(48),
+      TOKEN_PEPPER: 't'.repeat(48),
+      SNAPSHOT_KEY: Buffer.alloc(32, 2).toString('base64'),
+      ADMIN_PASSWORD_HASH: '$argon2id$v=19$m=65536,t=3,p=1$example$safetesthash',
+    } satisfies NodeJS.ProcessEnv;
+    expect(loadConfig(production).ALLOW_NO_ORIGIN).toBe(false);
+    expect(loadConfig({ ...production, ALLOW_NO_ORIGIN: 'true' }).ALLOW_NO_ORIGIN).toBe(true);
+    expect(loadConfig({ ...baseEnv, ALLOW_NO_ORIGIN: 'false' }).ALLOW_NO_ORIGIN).toBe(false);
+  });
 });

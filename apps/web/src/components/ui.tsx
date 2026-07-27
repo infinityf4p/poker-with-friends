@@ -195,6 +195,9 @@ export function Modal({
         aria-labelledby={titleId}
         tabIndex={-1}
         onKeyDown={(event) => {
+          // Cancelling an IME composition also emits Escape — never treat
+          // that as a request to close the dialog.
+          if (event.nativeEvent.isComposing || event.keyCode === 229) return;
           if (event.key === 'Escape') {
             event.stopPropagation();
             if (!locked && onClose) {

@@ -28,6 +28,7 @@ export interface TableActionItem {
   cards?: Card[];
   createdAt?: string;
   timedOut?: boolean;
+  deadBlind?: boolean;
 }
 
 export type EnhancedRoomProjection = PublicRoomProjection;
@@ -84,6 +85,25 @@ export const positionChinese: Record<TablePosition, string> = {
   UTG: '枪口位',
   HJ: '劫位',
   CO: '关煞位',
+};
+
+/** Chinese labels for the engine's HandCategory ordinals (0 = high card … 8 = straight flush). */
+export const handRankChinese: Record<number, string> = {
+  0: '高牌',
+  1: '一对',
+  2: '两对',
+  3: '三条',
+  4: '顺子',
+  5: '同花',
+  6: '葫芦',
+  7: '四条',
+  8: '同花顺',
+};
+
+export const settlementReasonChinese: Record<string, string> = {
+  UNCONTESTED: '其余玩家弃牌',
+  SHOWDOWN: '摊牌获胜',
+  LIVE_CONFIRMED: '现场结果确认',
 };
 
 export const actionChinese: Record<string, string> = {
@@ -372,6 +392,7 @@ export function historyActions(
           amount: asNumber(forcedBet.amount),
           stackAfter: asNumber(forcedBet.stackAfter),
           createdAt,
+          deadBlind: forcedBet.deadBlind === true,
         });
       }
       return;
@@ -428,7 +449,7 @@ export function naturalAction(action: TableActionItem): string {
     const cards = action.cards?.map(cardText).join(' ') ?? '';
     return `${phaseLabel[action.street] ?? action.street}发牌${cards ? ` · ${cards}` : ''}`;
   }
-  const verb = actionChinese[action.action] ?? '行动';
+  const verb = action.deadBlind ? '补死盲' : (actionChinese[action.action] ?? '行动');
   const hidesAmount = action.action === 'FOLD' || action.action === 'CHECK';
   const amount = hidesAmount ? undefined : action.amount;
   const target = hidesAmount ? undefined : action.amountTo;
@@ -440,6 +461,15 @@ export function naturalAction(action: TableActionItem): string {
         ? `（本次投入 ${formatPoints(amount)}）`
         : ` ${formatPoints(amount)}`;
   return `${actor} ${verb}${targetCopy}${investedCopy}${action.timedOut ? '（超时）' : ''}`;
+}
+
+/**
+ * Maps a fixed table seat to a visual slot while keeping the hero at the
+ * bottom edge (slot 3). The actual seat number and poker positions do not
+ * change.
+ */
+export function displaySeatForHero(seat: number, heroSeat: number | null): number {
+  return heroSeat === null ? seat : (seat - heroSeat + 3 + 6) % 6;
 }
 
 function cardText(card: Card): string {

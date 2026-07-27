@@ -32,7 +32,11 @@ function commandErrorMessage(code: string, message: string): string {
   return message;
 }
 
-export function useRoom(roomId: string, adminView = false): RoomConnection {
+/**
+ * `spectatorView` polls the login-gated public snapshot instead of opening a
+ * player socket — used by the read-only ?view=public page.
+ */
+export function useRoom(roomId: string, spectatorView = false): RoomConnection {
   const [room, setRoom] = useState<PublicRoomProjection | null>(null);
   const [me, setMe] = useState<PrivatePlayerProjection | null>(null);
   const [connected, setConnected] = useState(false);
@@ -86,20 +90,21 @@ export function useRoom(roomId: string, adminView = false): RoomConnection {
     try {
       applySnapshot(
         await api<RoomSnapshotEnvelope>(
-          adminView ? `/api/admin/rooms/${roomId}/snapshot` : `/api/rooms/${roomId}`,
+          spectatorView ? `/api/rooms/${roomId}/spectate` : `/api/rooms/${roomId}`,
         ),
       );
-      if (adminView) setConnected(true);
+      if (spectatorView) setConnected(true);
     } catch (caught) {
+      if (spectatorView) setConnected(false);
       setError(caught instanceof Error ? caught.message : '牌桌同步失败');
     } finally {
       setLoading(false);
     }
-  }, [adminView, applySnapshot, roomId]);
+  }, [spectatorView, applySnapshot, roomId]);
 
   useEffect(() => {
     void refresh();
-    if (adminView) {
+    if (spectatorView) {
       const poll = window.setInterval(() => void refresh(), 2_000);
       return () => {
         window.clearInterval(poll);
@@ -145,7 +150,7 @@ export function useRoom(roomId: string, adminView = false): RoomConnection {
       socket.disconnect();
       socketRef.current = null;
     };
-  }, [adminView, applyPublic, applySnapshot, refresh, roomId]);
+  }, [spectatorView, applyPublic, applySnapshot, refresh, roomId]);
 
   const send = useCallback(
     async (

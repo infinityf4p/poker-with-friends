@@ -8,6 +8,7 @@ import { describe, expect, it } from 'vitest';
 import {
   betSuggestions,
   cardRankLabel,
+  displaySeatForHero,
   historyActions,
   historySettlement,
   naturalAction,
@@ -168,6 +169,54 @@ describe('poker UI helpers', () => {
         amountTo: 40,
       }),
     ).toBe('BTN 按钮位 · 当时的小明 加注到 40');
+  });
+
+  it('labels owed dead blinds separately from antes and keeps their balance snapshot', () => {
+    const hand: HandHistoryItem = {
+      handId: 'hand-dead-blind',
+      handNumber: 2,
+      startedAt: new Date(0).toISOString(),
+      endedAt: new Date(1).toISOString(),
+      mode: 'ONLINE',
+      result: {},
+      events: [
+        {
+          seq: 1,
+          type: 'HAND_STARTED',
+          createdAt: new Date(0).toISOString(),
+          publicPayload: {
+            forcedBets: [
+              {
+                playerId: 'p1',
+                nickname: '小明',
+                positions: ['BTN'],
+                action: 'ANTE',
+                amount: 20,
+                stackAfter: 1_960,
+                deadBlind: true,
+              },
+            ],
+          },
+        },
+      ],
+    };
+    const action = historyActions(hand, new Map())[0]!;
+    expect(action).toMatchObject({ deadBlind: true, amount: 20, stackAfter: 1_960 });
+    expect(naturalAction(action)).toBe('BTN 按钮位 · 小明 补死盲 20');
+  });
+
+  it('rotates every hero seat to the bottom without changing the seat permutation', () => {
+    for (let heroSeat = 0; heroSeat < 6; heroSeat += 1) {
+      expect(displaySeatForHero(heroSeat, heroSeat)).toBe(3);
+      expect(
+        Array.from({ length: 6 }, (_, seatNumber) =>
+          displaySeatForHero(seatNumber, heroSeat),
+        ).sort(),
+      ).toEqual([0, 1, 2, 3, 4, 5]);
+    }
+    expect(
+      Array.from({ length: 6 }, (_, seatNumber) => displaySeatForHero(seatNumber, null)),
+    ).toEqual([0, 1, 2, 3, 4, 5]);
   });
 
   it('summarizes winners, side pots, refunds, and the board for history cards', () => {

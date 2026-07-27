@@ -91,7 +91,7 @@ export async function registerHttpRoutes(
   app.addHook('onRequest', async (request, reply) => {
     if (
       requiresSameOrigin(request.method) &&
-      !isAllowedBrowserOrigin(request.headers.origin, config.PUBLIC_ORIGIN)
+      !isAllowedBrowserOrigin(request.headers.origin, config.PUBLIC_ORIGIN, config.ALLOW_NO_ORIGIN)
     ) {
       return reply
         .code(403)
@@ -617,6 +617,30 @@ export async function registerHttpRoutes(
       request.log.error(
         { failure: safeErrorLogContext(error), roomId: request.params.id },
         'room snapshot recovery failed',
+      );
+      return reply
+        .code(503)
+        .send({ error: 'ROOM_FROZEN', message: '牌局恢复失败，已冻结等待处理' });
+    }
+  });
+
+  app.get<{ Params: { id: string } }>('/api/rooms/:id/spectate', async (request, reply) => {
+    const [user, admin] = await Promise.all([
+      repository.getUserBySession(request.cookies[USER_COOKIE]),
+      repository.getAdminBySession(request.cookies[ADMIN_COOKIE]),
+    ]);
+    if (!user && !admin) {
+      return reply.code(401).send({ error: 'UNAUTHORIZED', message: '请先登录后旁观' });
+    }
+    try {
+      return { public: await rooms.publicSnapshot(request.params.id), private: null };
+    } catch (error) {
+      if (error instanceof Error && error.message === 'ROOM_NOT_FOUND') {
+        return reply.code(404).send({ error: 'NOT_FOUND', message: '牌桌不存在' });
+      }
+      request.log.error(
+        { failure: safeErrorLogContext(error), roomId: request.params.id },
+        'spectator snapshot failed',
       );
       return reply
         .code(503)

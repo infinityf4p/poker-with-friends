@@ -42,6 +42,50 @@ describe('side pots', () => {
     expect(result.pots[1]).toMatchObject({ amount: 200, eligiblePlayerIds: ['b'] });
   });
 
+  it('folds an all-folded upper layer into the pot below instead of throwing', () => {
+    const result = buildSidePots([
+      { playerId: 'a', amount: 100, folded: true },
+      { playerId: 'b', amount: 100, folded: true },
+      { playerId: 'c', amount: 60, folded: false },
+    ]);
+
+    expect(result.pots).toHaveLength(1);
+    expect(result.pots[0]).toMatchObject({ amount: 260, eligiblePlayerIds: ['c'] });
+    expect(result.refunds).toEqual([]);
+    expect(result.totalContributed).toBe(260);
+  });
+
+  it('merges several stacked all-folded layers into the last contested pot', () => {
+    const result = buildSidePots([
+      { playerId: 'a', amount: 100, folded: true },
+      { playerId: 'b', amount: 100, folded: true },
+      { playerId: 'c', amount: 80, folded: true },
+      { playerId: 'd', amount: 60, folded: false },
+      { playerId: 'e', amount: 60, folded: false },
+    ]);
+
+    expect(result.pots).toHaveLength(1);
+    expect(result.pots[0]).toMatchObject({ amount: 400, eligiblePlayerIds: ['d', 'e'] });
+    expect(result.refunds).toEqual([]);
+    expect(result.totalContributed).toBe(400);
+  });
+
+  it('refunds contributors when no layer has a contender at all', () => {
+    const result = buildSidePots([
+      { playerId: 'a', amount: 50, folded: true },
+      { playerId: 'b', amount: 50, folded: true },
+    ]);
+
+    expect(result.pots).toEqual([]);
+    expect(result.refunds).toEqual(
+      expect.arrayContaining([
+        { playerId: 'a', amount: 50 },
+        { playerId: 'b', amount: 50 },
+      ]),
+    );
+    expect(result.totalContributed).toBe(100);
+  });
+
   it('settles each pot independently and awards odd chips by seat order', () => {
     const build = buildSidePots([
       { playerId: 'a', amount: 5, folded: false },

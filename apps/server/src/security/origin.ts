@@ -5,11 +5,17 @@ export function requiresSameOrigin(method: string): boolean {
 }
 
 /**
- * Browsers send Origin for cross-origin writes and realtime handshakes. Requests
- * without Origin remain available to trusted non-browser clients and health tools.
+ * Browsers send Origin for cross-origin writes and realtime handshakes.
+ * Whether a request without Origin is acceptable is the caller's policy
+ * (`allowMissingOrigin`): development/test tooling and trusted non-browser
+ * clients need it, production defaults to rejecting.
  */
-export function isAllowedBrowserOrigin(origin: string | undefined, publicOrigin: string): boolean {
-  if (origin === undefined) return true;
+export function isAllowedBrowserOrigin(
+  origin: string | undefined,
+  publicOrigin: string,
+  allowMissingOrigin = false,
+): boolean {
+  if (origin === undefined) return allowMissingOrigin;
   try {
     const parsed = new URL(origin);
     return parsed.origin === origin && parsed.origin === publicOrigin;

@@ -1,8 +1,10 @@
 import { describe, expect, it, vi } from 'vitest';
+import { DEFAULT_ROOM_SETTINGS, type PublicRoomProjection } from '@poker-with-friends/protocol';
 import { buildApp, safeErrorLogContext, safeRequestUrl } from './app.js';
 import type { AppConfig } from './config.js';
 import type { PokerRepository } from './repository.js';
 import type { RoomManager } from './room/manager.js';
+import { USER_COOKIE } from './security/cookies.js';
 
 const testConfig: AppConfig = {
   NODE_ENV: 'test',
@@ -15,6 +17,7 @@ const testConfig: AppConfig = {
   TOKEN_PEPPER: 'token-pepper-generated-for-tests-only',
   ADMIN_USERNAME: 'admin',
   TRUST_PROXY: false,
+  ALLOW_NO_ORIGIN: true,
   RETENTION_DAYS: 30,
   ROOM_IDLE_HOURS: 12,
   APP_BUILD_SHA: 'test',
@@ -84,6 +87,77 @@ describe('HTTP security boundary', () => {
         "font-src 'self' https://fonts.gstatic.com",
       );
       expect(health.headers['content-security-policy']).not.toContain("'unsafe-inline'");
+    } finally {
+      built.io.close();
+      await built.app.close();
+    }
+  });
+
+  it('requires login for spectator snapshots and gives non-members no private projection', async () => {
+    const roomId = '00000000-0000-4000-8000-000000000001';
+    const publicProjection: PublicRoomProjection = {
+      roomId,
+      name: 'Spectator test',
+      mode: 'ONLINE',
+      status: 'LOBBY',
+      settings: { ...DEFAULT_ROOM_SETTINGS, mode: 'ONLINE' },
+      serverSeq: 0,
+      handNumber: 0,
+      phase: null,
+      seats: [],
+      communityCards: [],
+      pots: [],
+      actingSeat: null,
+      buttonSeat: null,
+      smallBlindSeat: null,
+      bigBlindSeat: null,
+      liveDealerSeat: null,
+      pendingLiveStreet: null,
+      prompt: null,
+      liveResultProposal: null,
+      nextHandAt: null,
+      readyCount: 0,
+      requiredReadyCount: 0,
+      createdAt: new Date(0).toISOString(),
+      updatedAt: new Date(0).toISOString(),
+    };
+    const repository = {
+      getUserBySession: vi.fn(async (sessionToken?: string) =>
+        sessionToken === 'valid-user-session'
+          ? {
+              id: '00000000-0000-4000-8000-000000000099',
+              username: 'spectator',
+              displayName: 'Spectator',
+              mustChangePassword: false,
+            }
+          : null,
+      ),
+      getAdminBySession: vi.fn(async () => null),
+    } as unknown as PokerRepository;
+    const publicSnapshot = vi.fn(async () => publicProjection);
+    const rooms = {
+      setProjectionListener: vi.fn(),
+      publicSnapshot,
+    } as unknown as RoomManager;
+    const built = await buildApp({ config: testConfig, repository, rooms });
+    try {
+      const unauthenticated = await built.app.inject({
+        method: 'GET',
+        url: `/api/rooms/${roomId}/spectate`,
+      });
+      expect(unauthenticated.statusCode).toBe(401);
+      expect(unauthenticated.json()).toMatchObject({ error: 'UNAUTHORIZED' });
+      expect(publicSnapshot).not.toHaveBeenCalled();
+
+      const authenticated = await built.app.inject({
+        method: 'GET',
+        url: `/api/rooms/${roomId}/spectate`,
+        headers: { cookie: `${USER_COOKIE}=valid-user-session` },
+      });
+      expect(authenticated.statusCode).toBe(200);
+      expect(authenticated.json()).toEqual({ public: publicProjection, private: null });
+      expect(publicSnapshot).toHaveBeenCalledOnce();
+      expect(publicSnapshot).toHaveBeenCalledWith(roomId);
     } finally {
       built.io.close();
       await built.app.close();

@@ -22,7 +22,10 @@ export type IconName =
   | 'play'
   | 'plus'
   | 'refresh'
+  | 'rotate'
   | 'shield'
+  | 'sound'
+  | 'sound-off'
   | 'spade'
   | 'spark'
   | 'table'
@@ -116,7 +119,26 @@ const paths: Record<IconName, ReactNode> = {
       <path d="M6.1 9a7 7 0 0 1 11.5-2.6L20 11M4 13l2.4 4.6A7 7 0 0 0 17.9 15" />
     </>
   ),
+  rotate: (
+    <>
+      <path d="M21 12a9 9 0 1 1-9-9" />
+      <path d="M21 3v5h-5" />
+      <circle cx="12" cy="12" r="2.5" />
+    </>
+  ),
   shield: <path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10Z" />,
+  sound: (
+    <>
+      <path d="M11 5 6 9H3v6h3l5 4V5Z" />
+      <path d="M15.5 8.5a5 5 0 0 1 0 7M18.4 5.6a9 9 0 0 1 0 12.8" />
+    </>
+  ),
+  'sound-off': (
+    <>
+      <path d="M11 5 6 9H3v6h3l5 4V5Z" />
+      <path d="m16 9.5 5 5M21 9.5l-5 5" />
+    </>
+  ),
   spade: (
     <path d="M12 3C9 7.6 4.5 10.4 4.5 14.2A4.6 4.6 0 0 0 9 19c1.1 0 2.1-.4 3-1v3H9.5v1h5v-1H12v-3c.9.6 1.9 1 3 1a4.6 4.6 0 0 0 4.5-4.8C19.5 10.4 15 7.6 12 3Z" />
   ),

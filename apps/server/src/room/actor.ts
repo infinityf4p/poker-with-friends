@@ -15,6 +15,7 @@ import {
   type BettingPlayerState,
   type Card,
   type HandRank,
+  type PotAward,
   type PotSettlement,
   type SidePotBuild,
 } from '@poker-with-friends/engine';
@@ -24,6 +25,7 @@ import type {
   CommandSuccess,
   EmptyCommand,
   HandActionCommand,
+  LastHandSummary,
   LiveResultProposalIdCommand,
   LiveResultProposeCommand,
   LiveStreetDealtCommand,
@@ -137,10 +139,14 @@ function asRuntimeState(loaded: LoadedRoom): RuntimeRoomState {
     const rowsById = new Map(loaded.players.map((player) => [player.id, player]));
     return {
       ...runtimeState,
+      // Fields introduced after v0.4.x default cleanly on legacy snapshots.
+      nextBigBlindPlayerId: runtimeState.nextBigBlindPlayerId ?? null,
+      lastHandSummary: runtimeState.lastHandSummary ?? null,
       // Socket presence cannot survive a process restart.
       players: (stored.players as RuntimePlayer[]).map((player) => ({
         ...player,
         connected: false,
+        owesBigBlind: player.owesBigBlind ?? false,
         membershipStatus:
           rowsById.get(player.id)?.membershipStatus ?? player.membershipStatus ?? 'ACTIVE',
         kickedAt: rowsById.get(player.id)?.kickedAt?.toISOString() ?? player.kickedAt ?? null,
@@ -166,6 +172,7 @@ function asRuntimeState(loaded: LoadedRoom): RuntimeRoomState {
     serverSeq: loaded.room.serverSeq,
     handNumber: loaded.room.handNumber,
     previousButtonSeat: null,
+    nextBigBlindPlayerId: null,
     players: loaded.players.map((player) => ({
       id: player.id,
       nickname: player.nickname,
@@ -174,6 +181,7 @@ function asRuntimeState(loaded: LoadedRoom): RuntimeRoomState {
       ready: player.ready,
       connected: false,
       sittingOut: player.sittingOut,
+      owesBigBlind: false,
       membershipStatus: player.membershipStatus,
       kickedAt: player.kickedAt?.toISOString() ?? null,
       kickedByAdminId: player.kickedByAdminId,
@@ -181,6 +189,7 @@ function asRuntimeState(loaded: LoadedRoom): RuntimeRoomState {
     })),
     hand: null,
     nextHandAt: null,
+    lastHandSummary: null,
     createdAt: publicSnapshot.createdAt ?? loaded.room.createdAt.toISOString(),
     updatedAt: nowIso(),
   };
@@ -376,10 +385,56 @@ function assertHandChipsConserved(state: RuntimeRoomState, hand: RuntimeHand): v
   }
 }
 
+function buildHandSummary(
+  state: RuntimeRoomState,
+  hand: RuntimeHand,
+  reason: LastHandSummary['reason'],
+  awards: readonly PotAward[],
+  ranks?: ReadonlyMap<string, HandRank>,
+): LastHandSummary {
+  const wonBy = new Map<string, number>();
+  for (const award of awards) {
+    for (const share of award.shares) {
+      wonBy.set(share.playerId, (wonBy.get(share.playerId) ?? 0) + share.amount);
+    }
+  }
+  const winners = [...wonBy.entries()]
+    .map(([playerId, amount]) => {
+      const player = state.players.find((candidate) => candidate.id === playerId);
+      const rank = ranks?.get(playerId);
+      return {
+        playerId,
+        nickname: player?.nickname ?? '玩家',
+        seat: player?.seat ?? null,
+        amount,
+        ...(rank ? { handRankCategory: rank.category, bestCards: [...rank.cards] } : {}),
+      };
+    })
+    .sort((left, right) => right.amount - left.amount);
+  return {
+    handNumber: hand.number,
+    reason,
+    totalPot: awards.reduce((sum, award) => sum + award.amount, 0),
+    winners,
+    communityCards: [...hand.communityCards],
+  };
+}
+
+function nextBigBlindPlayerId(state: RuntimeRoomState, hand: RuntimeHand): string | null {
+  const participantsBySeat = new Map<number, string>();
+  for (const playerId of hand.participantIds) {
+    const seat = state.players.find((player) => player.id === playerId)?.seat;
+    if (seat !== null && seat !== undefined) participantsBySeat.set(seat, playerId);
+  }
+  const nextSeat = orderedSeatsAfter([...participantsBySeat.keys()], hand.bigBlindSeat)[0];
+  return nextSeat === undefined ? null : (participantsBySeat.get(nextSeat) ?? null);
+}
+
 function finishSettledHand(
   state: RuntimeRoomState,
   result: unknown,
   ledgerMutations: NonNullable<RoomCommit['ledgerMutations']>,
+  summary: LastHandSummary | null = null,
 ): MutationExtras {
   const hand = state.hand!;
   assertHandChipsConserved(state, hand);
@@ -392,7 +447,9 @@ function finishSettledHand(
   hand.result = result;
   state.status = 'BETWEEN_HANDS';
   state.previousButtonSeat = hand.buttonSeat;
+  state.nextBigBlindPlayerId = nextBigBlindPlayerId(state, hand);
   state.nextHandAt = null;
+  state.lastHandSummary = summary;
   const kickedPlayerIds = state.players
     .filter((player) => player.membershipStatus === 'KICK_PENDING')
     .map((player) => {
@@ -428,7 +485,12 @@ function settleUncontested(state: RuntimeRoomState): MutationExtras {
     awards: settlement.awards,
     refunds: settlement.refunds,
   };
-  return finishSettledHand(state, result, ledger);
+  return finishSettledHand(
+    state,
+    result,
+    ledger,
+    buildHandSummary(state, hand, 'UNCONTESTED', settlement.awards),
+  );
 }
 
 function settleOnlineShowdown(state: RuntimeRoomState): MutationExtras {
@@ -461,7 +523,12 @@ function settleOnlineShowdown(state: RuntimeRoomState): MutationExtras {
       ]),
     ),
   };
-  return finishSettledHand(state, result, ledger);
+  return finishSettledHand(
+    state,
+    result,
+    ledger,
+    buildHandSummary(state, hand, 'SHOWDOWN', settlement.awards, ranks),
+  );
 }
 
 function manualLiveSettlement(
@@ -508,6 +575,7 @@ function manualLiveSettlement(
     state,
     { reason: 'LIVE_CONFIRMED', awards, refunds: build.refunds },
     ledger,
+    buildHandSummary(state, hand, 'LIVE_CONFIRMED', awards),
   );
   if (proposalId) settled.liveProposalUpdate = { id: proposalId, status: 'SETTLED' };
   return settled;
@@ -544,6 +612,22 @@ function beginHand(state: RuntimeRoomState): MutationExtras {
       ? seats[randomInt(seats.length)]!
       : rotateDealerButton(seats, state.previousButtonSeat);
   const positions = getTablePositions(seats, buttonSeat);
+
+  // The next normal big-blind obligation is recorded when the previous hand
+  // settles. Following the player (rather than comparing physical seat arcs)
+  // avoids false debts when joins/leaves make the live big blind stay put.
+  const dueBigBlindPlayer = state.nextBigBlindPlayerId
+    ? state.players.find((player) => player.id === state.nextBigBlindPlayerId)
+    : null;
+  if (
+    dueBigBlindPlayer &&
+    dueBigBlindPlayer.seat !== null &&
+    dueBigBlindPlayer.stack > 0 &&
+    dueBigBlindPlayer.membershipStatus === 'ACTIVE' &&
+    !participants.some((participant) => participant.id === dueBigBlindPlayer.id)
+  ) {
+    dueBigBlindPlayer.owesBigBlind = true;
+  }
   const positionLabels = tablePositions(
     seats,
     positions.buttonSeat,
@@ -570,10 +654,23 @@ function beginHand(state: RuntimeRoomState): MutationExtras {
           ? state.settings.bigBlind
           : 0;
     const amount = Math.min(player.stack, forced);
+    let stack = player.stack - amount;
+    // A returning player who owes a big blind posts it dead: it joins the pot
+    // via committedHand but does not act as a live wager. Landing on the
+    // natural big blind clears the debt with the regular live post.
+    let deadAmount = 0;
+    if (player.owesBigBlind) {
+      if (player.seat !== positions.bigBlindSeat) {
+        deadAmount = Math.min(stack, state.settings.bigBlind);
+        stack -= deadAmount;
+      }
+      player.owesBigBlind = false;
+    }
     return {
       player,
       amount,
-      stack: player.stack - amount,
+      deadAmount,
+      stack,
       committedStreet: amount,
     };
   });
@@ -592,7 +689,7 @@ function beginHand(state: RuntimeRoomState): MutationExtras {
       seat: entry.player.seat!,
       stack: entry.stack,
       committedStreet: entry.committedStreet,
-      committedHand: entry.committedStreet,
+      committedHand: entry.committedStreet + entry.deadAmount,
     })),
     firstActorId: firstActor,
     minimumBet: state.settings.bigBlind,
@@ -626,15 +723,28 @@ function beginHand(state: RuntimeRoomState): MutationExtras {
   state.hand = hand;
   state.status = 'ACTIVE';
   state.nextHandAt = null;
+  state.lastHandSummary = null;
   const ledgerMutations: NonNullable<RoomCommit['ledgerMutations']> = posted
     .filter((entry) => entry.amount > 0)
     .map((entry) => ({
       playerId: entry.player.id,
       kind: entry.player.seat === positions.smallBlindSeat ? 'SMALL_BLIND' : 'BIG_BLIND',
       delta: -entry.amount,
-      balanceAfter: entry.stack,
+      // The dead blind is deducted after the live blind in its own entry, so
+      // this row's balance reflects only the live post.
+      balanceAfter: entry.stack + entry.deadAmount,
       metadata: { handId: hand.id },
     }));
+  for (const entry of posted) {
+    if (entry.deadAmount <= 0) continue;
+    ledgerMutations.push({
+      playerId: entry.player.id,
+      kind: 'DEAD_BLIND',
+      delta: -entry.deadAmount,
+      balanceAfter: entry.stack,
+      metadata: { handId: hand.id },
+    });
+  }
   let extras: MutationExtras = {
     eventType: 'HAND_STARTED',
     publicPayload: {
@@ -648,18 +758,35 @@ function beginHand(state: RuntimeRoomState): MutationExtras {
         seat: player.seat,
         positions: positionLabels.get(player.seat!) ?? [],
       })),
-      forcedBets: posted
-        .filter((entry) => entry.amount > 0)
-        .map((entry) => ({
-          playerId: entry.player.id,
-          nickname: entry.player.nickname,
-          seat: entry.player.seat,
-          positions: positionLabels.get(entry.player.seat!) ?? [],
-          action: entry.player.seat === positions.smallBlindSeat ? 'SMALL_BLIND' : 'BIG_BLIND',
-          amount: entry.amount,
-          committedStreet: entry.committedStreet,
-          stackAfter: entry.stack,
-        })),
+      forcedBets: [
+        ...posted
+          .filter((entry) => entry.amount > 0)
+          .map((entry) => ({
+            playerId: entry.player.id,
+            nickname: entry.player.nickname,
+            seat: entry.player.seat,
+            positions: positionLabels.get(entry.player.seat!) ?? [],
+            action: entry.player.seat === positions.smallBlindSeat ? 'SMALL_BLIND' : 'BIG_BLIND',
+            amount: entry.amount,
+            committedStreet: entry.committedStreet,
+            // Keep the public action timeline consistent with the ledger:
+            // the live blind is posted first, then any owed dead blind.
+            stackAfter: entry.stack + entry.deadAmount,
+          })),
+        ...posted
+          .filter((entry) => entry.deadAmount > 0)
+          .map((entry) => ({
+            playerId: entry.player.id,
+            nickname: entry.player.nickname,
+            seat: entry.player.seat,
+            positions: positionLabels.get(entry.player.seat!) ?? [],
+            action: 'ANTE',
+            amount: entry.deadAmount,
+            committedStreet: entry.committedStreet,
+            stackAfter: entry.stack,
+            deadBlind: true,
+          })),
+      ],
     },
     ledgerMutations,
     handStart: {
@@ -1041,6 +1168,7 @@ export class RoomActor {
           ready: row.ready,
           connected: false,
           sittingOut: row.sittingOut,
+          owesBigBlind: false,
           membershipStatus: row.membershipStatus,
           kickedAt: row.kickedAt?.toISOString() ?? null,
           kickedByAdminId: row.kickedByAdminId,

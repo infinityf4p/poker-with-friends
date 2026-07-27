@@ -67,11 +67,26 @@ const configSchema = z
     ADMIN_USERNAME: z.string().min(1).max(64).default('admin'),
     ADMIN_PASSWORD_HASH: z.string().optional(),
     TRUST_PROXY: booleanString,
+    /**
+     * Write requests and realtime handshakes normally require a matching
+     * Origin header. Browsers always send one, so in production a missing
+     * Origin is rejected unless this escape hatch is enabled for trusted
+     * non-browser clients. Development and test default to permissive so
+     * local tooling keeps working.
+     */
+    ALLOW_NO_ORIGIN: z.enum(['true', 'false']).optional(),
     RETENTION_DAYS: z.coerce.number().int().min(1).max(365).default(30),
     ROOM_IDLE_HOURS: z.coerce.number().int().min(1).max(168).default(12),
     APP_BUILD_SHA: z.string().default('development'),
     WEB_DIST_DIR: z.string().default('apps/web/dist'),
   })
+  .transform((value) => ({
+    ...value,
+    ALLOW_NO_ORIGIN:
+      value.ALLOW_NO_ORIGIN === undefined
+        ? value.NODE_ENV !== 'production'
+        : value.ALLOW_NO_ORIGIN === 'true',
+  }))
   .superRefine((value, ctx) => {
     if (value.NODE_ENV !== 'production') return;
 

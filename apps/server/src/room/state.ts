@@ -1,6 +1,7 @@
 import type { BettingRoundState, Card, SidePotBuild } from '@poker-with-friends/engine';
 import type {
   HandPhase,
+  LastHandSummary,
   LiveResultProposal,
   MembershipStatus,
   PlayerAction,
@@ -18,6 +19,8 @@ export interface RuntimePlayer {
   ready: boolean;
   connected: boolean;
   sittingOut: boolean;
+  /** The big blind passed this seat while its player sat out; a dead big blind is due on return. */
+  owesBigBlind: boolean;
   membershipStatus: MembershipStatus;
   kickedAt: string | null;
   kickedByAdminId: string | null;
@@ -71,9 +74,12 @@ export interface RuntimeRoomState {
   serverSeq: number;
   handNumber: number;
   previousButtonSeat: number | null;
+  /** Player whose normal big-blind turn comes next, based on the last settled hand. */
+  nextBigBlindPlayerId: string | null;
   players: RuntimePlayer[];
   hand: RuntimeHand | null;
   nextHandAt: string | null;
+  lastHandSummary: LastHandSummary | null;
   createdAt: string;
   updatedAt: string;
 }

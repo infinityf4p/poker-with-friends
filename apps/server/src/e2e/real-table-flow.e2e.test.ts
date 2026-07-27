@@ -225,6 +225,7 @@ describeWithDatabase('real HTTP + Socket.IO three-player table flow', () => {
       ADMIN_USERNAME: adminUsername,
       ADMIN_PASSWORD_HASH: await argon2.hash(adminPassword),
       TRUST_PROXY: false,
+      ALLOW_NO_ORIGIN: true,
       RETENTION_DAYS: 30,
       ROOM_IDLE_HOURS: 12,
       APP_BUILD_SHA: 'e2e',
@@ -260,6 +261,57 @@ describeWithDatabase('real HTTP + Socket.IO three-player table flow', () => {
       }
       await database.client.end({ timeout: 5 });
     }
+  });
+
+  it('requires login to spectate and returns only the public projection to a non-member', async () => {
+    await request<UserSession>(admin, 'POST', '/api/admin/login', {
+      username: adminUsername,
+      password: adminPassword,
+    });
+    const room = await request<CreatedRoom>(admin, 'POST', '/api/admin/rooms', {
+      name: `旁观鉴权-${runId}`,
+      settings: {
+        mode: 'ONLINE',
+        smallBlind: 10,
+        bigBlind: 20,
+        startingStack: 2_000,
+        stackCap: 2_000,
+        actionTimeoutSeconds: 30,
+        resultDisplaySeconds: 1,
+        nextHandCountdownSeconds: 1,
+        maxPlayers: 6,
+      },
+    });
+
+    const unauthenticated = await fetch(`${baseUrl}/api/rooms/${room.roomId}/spectate`);
+    expect(unauthenticated.status).toBe(401);
+    expect(await unauthenticated.json()).toMatchObject({ error: 'UNAUTHORIZED' });
+
+    const account = await request<AdminUserSummary>(admin, 'POST', '/api/admin/users', {
+      username: `spectator_${runId}`,
+      displayName: '旁观测试用户',
+      password: initialPassword,
+    });
+    createdAccountIds.push(account.id);
+    const spectator: HttpSession = { cookie: '' };
+    await request<UserSession>(spectator, 'POST', '/api/auth/login', {
+      username: account.username,
+      password: initialPassword,
+    });
+    const memberships = await request<UserRoomSummary[]>(spectator, 'GET', '/api/me/rooms');
+    expect(memberships.some((membership) => membership.roomId === room.roomId)).toBe(false);
+
+    const snapshot = await request<RoomSnapshotEnvelope>(
+      spectator,
+      'GET',
+      `/api/rooms/${room.roomId}/spectate`,
+    );
+    expect(snapshot.public).toMatchObject({
+      roomId: room.roomId,
+      name: `旁观鉴权-${runId}`,
+      status: 'LOBBY',
+    });
+    expect(snapshot.private).toBeNull();
   });
 
   it('plays four streets, preserves chips, records actions, and starts heads-up next hand', async () => {

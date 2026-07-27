@@ -1,4 +1,5 @@
 import type { FastifyInstance } from 'fastify';
+import type { IncomingMessage } from 'node:http';
 import { parse as parseCookie } from 'cookie';
 import { Server, type Socket } from 'socket.io';
 import type { ZodType } from 'zod';
@@ -46,13 +47,45 @@ const commandBusy = (): CommandFailure => ({
   message: '操作过于频繁，请稍候',
 });
 
+type RealtimeRequest = Pick<IncomingMessage, 'headers' | 'method' | 'url'>;
+
+/**
+ * Same-origin polling GETs may omit Origin in browsers. In strict mode they
+ * are only accepted when Fetch Metadata proves the initiator is same-origin;
+ * WebSocket handshakes and every other missing-Origin request remain closed.
+ */
+export function isAllowedRealtimeRequest(
+  request: RealtimeRequest,
+  publicOrigin: string,
+  allowMissingOrigin: boolean,
+): boolean {
+  const origin = request.headers.origin;
+  if (origin !== undefined) {
+    return isAllowedBrowserOrigin(origin, publicOrigin, false);
+  }
+  if (allowMissingOrigin) return true;
+  if (request.method?.toUpperCase() !== 'GET') return false;
+  if (request.headers['sec-fetch-site'] !== 'same-origin') return false;
+  if (request.headers.upgrade?.toLowerCase() === 'websocket') return false;
+
+  try {
+    const requestUrl = new URL(request.url ?? '', publicOrigin);
+    return requestUrl.searchParams.get('transport') === 'polling';
+  } catch {
+    return false;
+  }
+}
+
 export function registerSocketServer(app: FastifyInstance, deps: SocketDependencies): Server {
   const io = new Server(app.server, {
     path: '/socket.io/',
     serveClient: false,
     cors: { origin: deps.config.PUBLIC_ORIGIN, credentials: true },
     allowRequest: (request, callback) =>
-      callback(null, isAllowedBrowserOrigin(request.headers.origin, deps.config.PUBLIC_ORIGIN)),
+      callback(
+        null,
+        isAllowedRealtimeRequest(request, deps.config.PUBLIC_ORIGIN, deps.config.ALLOW_NO_ORIGIN),
+      ),
     connectionStateRecovery: {
       maxDisconnectionDuration: 2 * 60 * 1_000,
       skipMiddlewares: false,

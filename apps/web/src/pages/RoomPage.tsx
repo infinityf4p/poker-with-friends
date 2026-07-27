@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState, type ReactNode } from 'react';
+import { useEffect, useMemo, useRef, useState, type ReactNode } from 'react';
 import type {
   Card,
   HandHistoryItem,
@@ -11,18 +11,31 @@ import {
   actingCopy,
   actionChinese,
   betSuggestions,
+  displaySeatForHero,
   formatPoints,
+  handRankChinese,
   historyActions,
   historySettlement,
   naturalAction,
   phaseLabel,
   positionLabel,
   positionsForRoom,
+  settlementReasonChinese,
   statusLabel,
   type EnhancedRoomProjection,
   type EnhancedSeat,
   type TablePosition,
 } from '../poker-ui';
+import {
+  playDeal,
+  playBet,
+  playSettle,
+  playTurnAlert,
+  playWin,
+  primeSound,
+  setSoundEnabled,
+  soundEnabled,
+} from '../sound';
 import { useRoom } from '../use-room';
 import { navigate } from '../navigation';
 import { ErrorBox, IconButton, Loading, Modal, ModeBadge } from '../components/ui';
@@ -44,10 +57,94 @@ export function RoomPage({ roomId }: { roomId: string }) {
   const [seconds, setSeconds] = useState(0);
   const [peeking, setPeeking] = useState(false);
   const { room, me } = connection;
+  const bannerRef = useRef<HTMLDivElement>(null);
+  const wasBusyRef = useRef(false);
+  const [soundOn, setSoundOn] = useState(soundEnabled);
+  const [rotateView, setRotateView] = useState(() => {
+    try {
+      return localStorage.getItem('pwf:view-rotate') !== 'off';
+    } catch {
+      return true;
+    }
+  });
+  const toggleSound = () => {
+    setSoundEnabled(!soundOn);
+    setSoundOn(!soundOn);
+  };
+  const toggleRotateView = () => {
+    setRotateView((current) => {
+      try {
+        localStorage.setItem('pwf:view-rotate', current ? 'off' : 'on');
+      } catch {
+        /* private mode */
+      }
+      return !current;
+    });
+  };
+
+  useEffect(() => {
+    const unlock = () => {
+      void primeSound();
+      window.removeEventListener('pointerdown', unlock, true);
+      window.removeEventListener('keydown', unlock, true);
+    };
+    window.addEventListener('pointerdown', unlock, { capture: true, once: true });
+    window.addEventListener('keydown', unlock, { capture: true, once: true });
+    return () => {
+      window.removeEventListener('pointerdown', unlock, true);
+      window.removeEventListener('keydown', unlock, true);
+    };
+  }, []);
+
+  // While a command runs, the surrounding <fieldset> disables the button the
+  // user just activated and the panel may unmount, dropping keyboard focus to
+  // <body>. Recover by moving focus to the acting banner, which also carries
+  // the live announcement of what happens next.
+  useEffect(() => {
+    if (wasBusyRef.current && !connection.busy && document.activeElement === document.body) {
+      bannerRef.current?.focus({ preventScroll: true });
+    }
+    wasBusyRef.current = connection.busy;
+  }, [connection.busy]);
 
   useEffect(() => {
     setPeeking(false);
   }, [room?.handNumber]);
+
+  // Table sounds: my turn, streets being dealt, and hand settlement.
+  const wasMyTurnRef = useRef(false);
+  useEffect(() => {
+    const myTurn = Boolean(me && room?.prompt?.playerId === me.playerId);
+    if (myTurn && !wasMyTurnRef.current) playTurnAlert();
+    wasMyTurnRef.current = myTurn;
+  }, [me, room?.prompt?.playerId]);
+
+  const boardCountRef = useRef(0);
+  useEffect(() => {
+    const count = room?.communityCards.length ?? 0;
+    if (count > boardCountRef.current) playDeal();
+    boardCountRef.current = count;
+  }, [room?.communityCards.length]);
+
+  const committedTotal = room?.seats.reduce((sum, seat) => sum + seat.committedHand, 0) ?? 0;
+  const committedRef = useRef<{ handNumber: number; total: number } | null>(null);
+  useEffect(() => {
+    const handNumber = room?.handNumber;
+    if (handNumber === undefined) return;
+    const previous = committedRef.current;
+    if (previous?.handNumber === handNumber && committedTotal > previous.total) playBet();
+    committedRef.current = { handNumber, total: committedTotal };
+  }, [committedTotal, room?.handNumber]);
+
+  const settledHandRef = useRef<number | null>(null);
+  useEffect(() => {
+    const summary = room?.lastHandSummary;
+    if (!summary || room?.status !== 'BETWEEN_HANDS') return;
+    if (settledHandRef.current === summary.handNumber) return;
+    settledHandRef.current = summary.handNumber;
+    if (me && summary.winners.some((winner) => winner.playerId === me.playerId)) playWin();
+    else playSettle();
+  }, [me, room?.lastHandSummary, room?.status]);
 
   useEffect(() => {
     const timer = window.setInterval(() => {
@@ -147,7 +244,11 @@ export function RoomPage({ roomId }: { roomId: string }) {
   const enhancedRoom = room as EnhancedRoomProjection;
   const mySeat = !me || me.seat === null ? null : enhancedRoom.seats[me.seat];
   const readyEligibleCount = enhancedRoom.seats.filter(
-    (seat) => seat.playerId && seat.connected && !seat.sittingOut && seat.stack > 0,
+    (seat) =>
+      seat.playerId &&
+      seat.connected &&
+      seat.stack > 0 &&
+      (!seat.sittingOut || seat.playerId === me?.playerId),
   ).length;
   const isMyTurn = Boolean(me && room.prompt?.playerId === me.playerId);
   const isLiveDealer = Boolean(me && me.seat !== null && room.liveDealerSeat === me.seat);
@@ -194,25 +295,31 @@ export function RoomPage({ roomId }: { roomId: string }) {
             第 {room.handNumber} 手 · {statusLabel[room.status] ?? room.status}
           </small>
         </div>
-        <button
-          className="table-history-trigger"
-          aria-label="查看牌谱"
-          aria-busy={historyStatus === 'loading'}
-          onClick={() => {
-            if (historyStatus === 'loading') setHistoryOpen(true);
-            else void loadHistory();
-          }}
-        >
-          <span className="table-history-trigger__icon">
-            <Icon name="book" size={18} />
-          </span>
-          <span className="table-history-trigger__copy">
-            <small>{historyStatus === 'ready' ? `${history.length} 手` : '回看'}</small>
-            <strong>牌谱</strong>
-          </span>
-        </button>
+        {!publicView && (
+          <button
+            className="table-history-trigger"
+            aria-label="查看牌谱"
+            aria-busy={historyStatus === 'loading'}
+            onClick={() => {
+              if (historyStatus === 'loading') setHistoryOpen(true);
+              else void loadHistory();
+            }}
+          >
+            <span className="table-history-trigger__icon">
+              <Icon name="book" size={18} />
+            </span>
+            <span className="table-history-trigger__copy">
+              <small>{historyStatus === 'ready' ? `${history.length} 手` : '回看'}</small>
+              <strong>牌谱</strong>
+            </span>
+          </button>
+        )}
       </header>
-      <div className={`acting-banner ${isMyTurn ? 'acting-banner--mine' : ''}`}>
+      <div
+        className={`acting-banner ${isMyTurn ? 'acting-banner--mine' : ''}`}
+        ref={bannerRef}
+        tabIndex={-1}
+      >
         <progress className="acting-progress" max={1} value={timerProgress} aria-hidden="true" />
         <span className="sr-only" aria-live="polite">
           {actingAnnouncement}
@@ -223,28 +330,50 @@ export function RoomPage({ roomId }: { roomId: string }) {
         <strong>{actingCopy(enhancedRoom, seconds)}</strong>
         {room.phase && (
           <small role="timer">
-            {phaseLabel[room.phase] ?? room.phase} · {seconds} 秒
+            {phaseLabel[room.phase] ?? room.phase}
+            {room.prompt || room.nextHandAt || room.liveResultProposal ? ` · ${seconds} 秒` : ''}
           </small>
         )}
       </div>
-      {(connection.error || pageError || notice) && (
-        <div className="table-notice-wrap">
-          {connection.error && (
-            <ErrorBox onClose={connection.clearError}>{connection.error}</ErrorBox>
-          )}
-          {pageError && <ErrorBox onClose={() => setPageError(null)}>{pageError}</ErrorBox>}
-          {notice && (
-            <div className="success-box" role="status">
-              {notice}
-            </div>
-          )}
+      <div className="table-notice-wrap">
+        {connection.error && (
+          <ErrorBox onClose={connection.clearError}>{connection.error}</ErrorBox>
+        )}
+        {pageError && <ErrorBox onClose={() => setPageError(null)}>{pageError}</ErrorBox>}
+        {/* Kept mounted so screen readers reliably announce notices (live
+            regions inserted together with their content are often skipped). */}
+        <div className={`success-box ${notice ? '' : 'success-box--empty'}`} role="status">
+          {notice}
         </div>
-      )}
+      </div>
       <div className="table-layout real-table-layout">
         <section className="table-column">
           <div className="table-mode-row">
             <ModeBadge mode={room.mode} />
             <span>{room.phase ? (phaseLabel[room.phase] ?? room.phase) : '等待开始'}</span>
+            <span className="table-view-controls">
+              {me && me.seat !== null && (
+                <button
+                  type="button"
+                  className={rotateView ? 'active' : ''}
+                  aria-pressed={rotateView}
+                  onClick={toggleRotateView}
+                  title="以自己为底边显示牌桌"
+                >
+                  <Icon name="rotate" size={14} /> 我的视角
+                </button>
+              )}
+              <button
+                type="button"
+                className={soundOn ? 'active' : ''}
+                aria-pressed={soundOn}
+                onClick={toggleSound}
+                title={soundOn ? '关闭音效' : '开启音效'}
+              >
+                <Icon name={soundOn ? 'sound' : 'sound-off'} size={14} />{' '}
+                {soundOn ? '音效开' : '音效关'}
+              </button>
+            </span>
           </div>
           <PokerTable
             room={enhancedRoom}
@@ -253,6 +382,7 @@ export function RoomPage({ roomId }: { roomId: string }) {
             peekedCards={canPeek && peeking ? peekCards : null}
             canClaim={Boolean(me && !frozen && !connection.busy && me.seat === null)}
             claimingSeat={claimingSeat}
+            viewSeat={rotateView && me && me.seat !== null ? me.seat : null}
             onClaim={(seat) => void claimSeat(seat)}
           />
           {me && (
@@ -260,14 +390,24 @@ export function RoomPage({ roomId }: { roomId: string }) {
               <button
                 onClick={() => void send('player.ready')}
                 disabled={
-                  frozen || connection.busy || mySeat?.ready === true || readyEligibleCount < 2
+                  room.status === 'ACTIVE' ||
+                  frozen ||
+                  connection.busy ||
+                  mySeat?.ready === true ||
+                  readyEligibleCount < 2
                 }
               >
                 <span>
                   <Icon name="check" size={19} />
                 </span>
                 <small>
-                  {readyEligibleCount < 2 ? '等待玩家' : mySeat?.ready ? '已准备' : '准备下一手'}
+                  {readyEligibleCount < 2
+                    ? '等待玩家'
+                    : mySeat?.ready
+                      ? '已准备'
+                      : mySeat?.sittingOut
+                        ? '回座并准备'
+                        : '准备下一手'}
                 </small>
               </button>
               <button
@@ -378,6 +518,7 @@ function PokerTable({
   peekedCards,
   canClaim,
   claimingSeat,
+  viewSeat,
   onClaim,
 }: {
   room: EnhancedRoomProjection;
@@ -386,10 +527,16 @@ function PokerTable({
   peekedCards: Record<string, Card[]> | null;
   canClaim: boolean;
   claimingSeat: number | null;
+  /** When set, seats are visually rotated so this seat renders at the bottom edge. */
+  viewSeat: number | null;
   onClaim: (seat: number) => void;
 }) {
   const totalPot = room.pots.reduce((sum, pot) => sum + pot.amount, 0);
   const positions = positionsForRoom(room);
+  const heroFolded = room.seats.some((seat) => seat.playerId === meId && seat.folded);
+  const summary = room.status === 'BETWEEN_HANDS' ? (room.lastHandSummary ?? null) : null;
+  const winnerIds = new Set((summary?.winners ?? []).map((winner) => winner.playerId));
+  // Seat display position 3 is the bottom edge, where the hero cards live.
   return (
     <section
       className={`table-arena table-arena--${room.mode.toLowerCase()} real-table-arena`}
@@ -405,6 +552,26 @@ function PokerTable({
             </strong>
             <span>{room.pots.length > 1 ? `${room.pots.length} 个池` : '筹码'}</span>
           </div>
+          {summary && summary.winners.length > 0 && (
+            <div className="settlement-banner" role="status">
+              <span className="settlement-banner__crown">
+                <Icon name="crown" size={20} />
+              </span>
+              <div className="settlement-banner__winners">
+                {summary.winners.map((winner) => (
+                  <div className="settlement-banner__winner" key={winner.playerId}>
+                    <strong>{winner.playerId === meId ? '你' : winner.nickname}</strong>
+                    <b className="chip-pop">+{formatPoints(winner.amount)}</b>
+                    <small>
+                      {winner.handRankCategory !== undefined
+                        ? (handRankChinese[winner.handRankCategory] ?? '获胜')
+                        : (settlementReasonChinese[summary.reason] ?? '获胜')}
+                    </small>
+                  </div>
+                ))}
+              </div>
+            </div>
+          )}
           {room.mode === 'ONLINE' ? (
             <>
               <div className="community-cards" role="group" aria-label="公共牌">
@@ -419,7 +586,11 @@ function PokerTable({
                   <span className="card-placeholder" key={index} />
                 ))}
               </div>
-              <div className="hero-cards" role="group" aria-label="你的手牌">
+              <div
+                className={`hero-cards ${heroFolded ? 'hero-cards--folded' : ''}`}
+                role="group"
+                aria-label="你的手牌"
+              >
                 {holeCards.map((card) => (
                   <PlayingCard
                     card={card}
@@ -450,7 +621,12 @@ function PokerTable({
         <Seat
           key={seat.seat}
           seat={seat}
+          displaySeat={displaySeatForHero(seat.seat, viewSeat)}
           own={seat.playerId === meId}
+          // The hero's cards are already large at the felt edge — the small
+          // seat-side reveal would only duplicate them.
+          hideRevealed={seat.playerId === meId && holeCards.length > 0}
+          winner={Boolean(seat.playerId && winnerIds.has(seat.playerId))}
           positions={positions.get(seat.seat) ?? []}
           peekedCards={
             seat.playerId && !seat.revealedCards ? (peekedCards?.[seat.playerId] ?? null) : null
@@ -466,7 +642,10 @@ function PokerTable({
 
 function Seat({
   seat,
+  displaySeat,
   own,
+  hideRevealed = false,
+  winner,
   positions,
   peekedCards,
   canClaim,
@@ -474,7 +653,11 @@ function Seat({
   onClaim,
 }: {
   seat: EnhancedSeat;
+  /** Visual position slot (0-5); differs from seat.seat when the view is rotated. */
+  displaySeat: number;
   own: boolean;
+  hideRevealed?: boolean;
+  winner: boolean;
   positions: TablePosition[];
   peekedCards: Card[] | null;
   canClaim: boolean;
@@ -485,7 +668,7 @@ function Seat({
     return (
       <button
         type="button"
-        className={`table-seat table-seat--${seat.seat} table-seat--empty`}
+        className={`table-seat table-seat--${displaySeat} table-seat--empty`}
         data-testid={`seat-${seat.seat}`}
         aria-label={
           claiming
@@ -524,7 +707,7 @@ function Seat({
         : '';
   return (
     <div
-      className={`table-seat table-seat--${seat.seat} ${own ? 'table-seat--own' : ''} ${stateClass}`}
+      className={`table-seat table-seat--${displaySeat} ${own ? 'table-seat--own' : ''} ${winner ? 'table-seat--winner' : ''} ${stateClass}`}
     >
       <div className="seat-avatar">
         <span className="mini-avatar">{seat.nickname?.slice(0, 1)}</span>
@@ -538,9 +721,10 @@ function Seat({
         <small>
           {status}
           {seat.committedHand ? ` · 已投 ${seat.committedHand}` : ''}
+          {seat.owesBigBlind ? ' · 回座需补盲' : ''}
         </small>
       </div>
-      {seat.revealedCards && (
+      {seat.revealedCards && !hideRevealed && (
         <div className="revealed-cards">
           {seat.revealedCards.map((card, index) => (
             <PlayingCard card={card} key={card} compact dealIndex={index} />
@@ -580,7 +764,9 @@ function OnlineActions({
   const prompt = room.prompt;
   const minimum = prompt?.minRaiseTo ?? prompt?.minBetTo ?? 0;
   const [amountInput, setAmountInput] = useState(String(minimum));
-  useEffect(() => setAmountInput(String(minimum)), [minimum, room.serverSeq]);
+  // Reset only when a new prompt arrives — unrelated room updates (another
+  // player reconnecting, seat changes) must not clobber a half-typed amount.
+  useEffect(() => setAmountInput(String(minimum)), [minimum, prompt?.deadlineAt]);
   if (room.status !== 'ACTIVE') return <WaitingPanel icon="check" title="等待下一手" />;
   if (heroSeat?.folded) {
     return (
@@ -769,9 +955,19 @@ function ReadyConfirmation({
   const eligible = room.seats.filter(
     (seat) => seat.playerId && seat.connected && !seat.sittingOut && seat.stack > 0,
   );
+  const canReturn = Boolean(
+    mySeat?.playerId && mySeat.connected && mySeat.sittingOut && mySeat.stack > 0,
+  );
+  const displayedPlayers =
+    canReturn && mySeat && !eligible.some((seat) => seat.playerId === mySeat.playerId)
+      ? [...eligible, mySeat]
+      : eligible;
   const ready = room.readyCount ?? eligible.filter((seat) => seat.ready).length;
-  const required = room.requiredReadyCount ?? eligible.length;
-  const enoughPlayers = eligible.length >= 2;
+  const required = canReturn
+    ? Math.max(room.requiredReadyCount ?? eligible.length, eligible.length) + 1
+    : (room.requiredReadyCount ?? eligible.length);
+  const enoughPlayers = displayedPlayers.length >= 2;
+  const canReady = Boolean(mySeat?.connected && mySeat.stack > 0);
   return (
     <section className="operation-panel ready-panel">
       <div className="ready-head">
@@ -793,30 +989,34 @@ function ReadyConfirmation({
         aria-label={`已确认 ${ready} 人，共需 ${required} 人`}
       />
       <ul className="ready-list">
-        {eligible.map((seat) => (
+        {displayedPlayers.map((seat) => (
           <li key={seat.playerId} className={seat.ready ? 'confirmed' : ''}>
             <span className="mini-avatar">{seat.nickname?.slice(0, 1)}</span>
             <span>
               <strong>{seat.nickname}</strong>
-              <small>{seat.ready ? '已准备' : '未准备'}</small>
+              <small>{seat.sittingOut ? '暂离' : seat.ready ? '已准备' : '未准备'}</small>
             </span>
             <Icon name={seat.ready ? 'check' : 'clock'} size={17} />
           </li>
         ))}
       </ul>
+      {mySeat?.sittingOut && mySeat.owesBigBlind && (
+        <p className="ready-note">回座将补 {formatPoints(room.settings.bigBlind)} 死盲</p>
+      )}
       {mySeat ? (
         <button
           className="primary-button ready-button"
-          disabled={
-            busy ||
-            mySeat.ready ||
-            !enoughPlayers ||
-            !eligible.some((seat) => seat.playerId === mySeat.playerId)
-          }
+          disabled={busy || mySeat.ready || !enoughPlayers || !canReady}
           onClick={onReady}
         >
           <Icon name="check" size={18} />{' '}
-          {!enoughPlayers ? '等待玩家' : mySeat.ready ? '已准备' : '准备下一手'}
+          {!enoughPlayers
+            ? '等待玩家'
+            : mySeat.ready
+              ? '已准备'
+              : mySeat.sittingOut
+                ? '回座并准备'
+                : '准备下一手'}
         </button>
       ) : null}
     </section>
@@ -846,7 +1046,7 @@ function MobileActionDock({
   const minimum = prompt.minRaiseTo ?? prompt.minBetTo ?? 0;
   const [raiseOpen, setRaiseOpen] = useState(false);
   const [amountInput, setAmountInput] = useState(String(minimum));
-  useEffect(() => setAmountInput(String(minimum)), [minimum, room.serverSeq]);
+  useEffect(() => setAmountInput(String(minimum)), [minimum, prompt.deadlineAt]);
   const amount = Number(amountInput);
   const valid =
     amountInput.trim() !== '' &&
