@@ -25,7 +25,7 @@ import {
 } from '../poker-ui';
 import { useRoom } from '../use-room';
 import { navigate } from '../navigation';
-import { ErrorBox, IconButton, Loading, Modal, ModeBadge } from '../components/ui';
+import { Brand, ErrorBox, IconButton, Loading, Modal, ModeBadge } from '../components/ui';
 import { PlayingCard } from '../components/cards';
 
 export function RoomPage({ roomId }: { roomId: string }) {
@@ -43,14 +43,18 @@ export function RoomPage({ roomId }: { roomId: string }) {
   const [claimingSeat, setClaimingSeat] = useState<number | null>(null);
   const [seconds, setSeconds] = useState(0);
   const [peeking, setPeeking] = useState(false);
+  const [settingsOpen, setSettingsOpen] = useState(false);
+  const [motion, setMotion] = useState(true);
   const { room, me } = connection;
 
   useEffect(() => {
     setPeeking(false);
-  }, [room?.handNumber]);
+    setWinnerForm(false);
+    setNotice(null);
+  }, [roomId, room?.handNumber]);
 
   useEffect(() => {
-    const timer = window.setInterval(() => {
+    const update = () => {
       const proposalDeadline = room?.liveResultProposal
         ? room.liveResultProposal.objectedByPlayerIds.length > 0 ||
           room.liveResultProposal.confirmedByPlayerIds.length > 0
@@ -61,7 +65,9 @@ export function RoomPage({ roomId }: { roomId: string }) {
       setSeconds(
         deadline ? Math.max(0, Math.ceil((new Date(deadline).getTime() - Date.now()) / 1_000)) : 0,
       );
-    }, 250);
+    };
+    update();
+    const timer = window.setInterval(update, 250);
     return () => window.clearInterval(timer);
   }, [room?.liveResultProposal, room?.nextHandAt, room?.prompt?.deadlineAt]);
 
@@ -71,19 +77,13 @@ export function RoomPage({ roomId }: { roomId: string }) {
     return () => window.clearTimeout(timeout);
   }, [notice]);
 
-  useEffect(() => {
-    if (!me || room?.prompt?.playerId !== me.playerId) return;
-    if (!window.matchMedia('(max-width: 919px)').matches) return;
-    window.scrollTo({ top: 0, left: 0 });
-  }, [me?.playerId, room?.prompt?.playerId]);
-
   const send = async (
     event: string,
     payload: Record<string, unknown> = {},
     needsTurnToken = false,
   ) => {
     const ok = await connection.send(event, payload, { needsTurnToken });
-    if (!ok) return;
+    if (!ok) return false;
     if (event === 'seat.claim') {
       const seat = typeof payload.seat === 'number' ? payload.seat + 1 : null;
       setNotice(seat ? `已选择 ${seat} 号位` : '座位已选择');
@@ -97,6 +97,7 @@ export function RoomPage({ roomId }: { roomId: string }) {
         `${action ? (actionChinese[action] ?? '行动') : '行动'}${amountTo === undefined ? '' : ` ${formatPoints(amountTo)}`}`,
       );
     } else setNotice('操作已确认');
+    return true;
   };
 
   const claimSeat = async (seat: number) => {
@@ -145,13 +146,11 @@ export function RoomPage({ roomId }: { roomId: string }) {
     );
   }
   const enhancedRoom = room as EnhancedRoomProjection;
-  const mySeat = !me || me.seat === null ? null : enhancedRoom.seats[me.seat];
-  const readyEligibleCount = enhancedRoom.seats.filter(
-    (seat) => seat.playerId && seat.connected && !seat.sittingOut && seat.stack > 0,
-  ).length;
+  const mySeat = enhancedRoom.seats.find((seat) => seat.playerId === me?.playerId) ?? null;
   const isMyTurn = Boolean(me && room.prompt?.playerId === me.playerId);
   const isLiveDealer = Boolean(me && me.seat !== null && room.liveDealerSeat === me.seat);
   const frozen = room.status === 'DISPUTED' || room.status === 'ARCHIVED';
+  const commandsDisabled = connection.busy || frozen || !connection.connected;
   const peekCards = me?.peekCards ?? null;
   const canPeek = Boolean(
     room.status === 'ACTIVE' && mySeat?.folded && peekCards && Object.keys(peekCards).length > 0,
@@ -175,173 +174,267 @@ export function RoomPage({ roomId }: { roomId: string }) {
   return (
     <main
       className={`table-page real-table-page ${room.status === 'BETWEEN_HANDS' ? 'payout-settled' : ''}`}
+      data-motion={motion ? 'on' : 'off'}
     >
-      <header className="table-header">
-        <IconButton
-          icon="arrow-left"
-          label="返回牌桌大厅"
-          onClick={() => navigate('/')}
-          className="round-button"
-        />
-        <div className="table-title">
-          <span>
-            <i className={connection.connected ? 'connection-dot' : 'connection-dot offline'} />{' '}
-            {connection.connected ? '在线' : '重连中'}
-            {publicView && ' · 旁观中'}
-          </span>
-          <h1>{room.name}</h1>
-          <small>
-            第 {room.handNumber} 手 · {statusLabel[room.status] ?? room.status}
-          </small>
+      <aside className="table-sidebar">
+        <Brand />
+        <nav className="sidebar-nav" aria-label="牌桌导航">
+          <button onClick={() => navigate('/')}>
+            <Icon name="table" size={18} />
+            牌桌大厅
+          </button>
+          <button className="active" aria-current="page">
+            <Icon name="spade" size={18} />
+            当前牌桌
+          </button>
+          <button onClick={() => void loadHistory()}>
+            <Icon name="history" size={18} />
+            牌局记录
+          </button>
+        </nav>
+        <div className="sidebar-table-details">
+          <small>当前牌桌</small>
+          <strong>{room.name}</strong>
+          <ModeBadge mode={room.mode} />
+          <dl>
+            <div>
+              <dt>盲注</dt>
+              <dd>
+                {formatPoints(room.settings.smallBlind)} / {formatPoints(room.settings.bigBlind)}
+              </dd>
+            </div>
+            <div>
+              <dt>座位</dt>
+              <dd>{room.seats.filter((seat) => seat.playerId).length} / 6</dd>
+            </div>
+            <div>
+              <dt>筹码上限</dt>
+              <dd>{formatPoints(room.settings.stackCap)}</dd>
+            </div>
+          </dl>
         </div>
-        <button
-          className="table-history-trigger"
-          aria-label="查看牌谱"
-          aria-busy={historyStatus === 'loading'}
-          onClick={() => {
-            if (historyStatus === 'loading') setHistoryOpen(true);
-            else void loadHistory();
-          }}
-        >
-          <span className="table-history-trigger__icon">
-            <Icon name="book" size={18} />
+        <div className="sidebar-account">
+          <span className="avatar">
+            {mySeat?.nickname?.slice(0, 1) ?? <Icon name="user" size={18} />}
           </span>
-          <span className="table-history-trigger__copy">
-            <small>{historyStatus === 'ready' ? `${history.length} 手` : '回看'}</small>
-            <strong>牌谱</strong>
+          <span>
+            <strong>{mySeat?.nickname ?? (publicView ? '旁观者' : '未入座')}</strong>
+            <small>{mySeat ? `${formatPoints(mySeat.stack)} 筹码` : 'Poker with Friends'}</small>
           </span>
-        </button>
-      </header>
-      <div className={`acting-banner ${isMyTurn ? 'acting-banner--mine' : ''}`}>
-        <progress className="acting-progress" max={1} value={timerProgress} aria-hidden="true" />
-        <span className="sr-only" aria-live="polite">
-          {actingAnnouncement}
-        </span>
-        <span className="turn-ring">
-          <Icon name="clock" size={17} />
-        </span>
-        <strong>{actingCopy(enhancedRoom, seconds)}</strong>
-        {room.phase && (
-          <small role="timer">
-            {phaseLabel[room.phase] ?? room.phase} · {seconds} 秒
-          </small>
+        </div>
+      </aside>
+      <div className="table-workspace">
+        <header className="table-header">
+          <IconButton
+            icon="arrow-left"
+            label="返回牌桌大厅"
+            onClick={() => navigate('/')}
+            className="round-button"
+          />
+          <div className="table-title">
+            <h1>{room.name}</h1>
+            <small>
+              {formatPoints(room.settings.smallBlind)} / {formatPoints(room.settings.bigBlind)} · 6
+              人桌
+            </small>
+          </div>
+          <div className="table-header-meta">
+            <i className={connection.connected ? 'connection-dot' : 'connection-dot offline'} />
+            {connection.connected ? (publicView ? '旁观中' : '已连接') : '重连中'}
+            <span>第 {room.handNumber} 手</span>
+          </div>
+          <div className="table-tools">
+            <button
+              className="table-history-trigger"
+              aria-label="查看牌谱"
+              title="查看牌谱"
+              aria-busy={historyStatus === 'loading'}
+              onClick={() => {
+                if (historyStatus === 'loading') setHistoryOpen(true);
+                else void loadHistory();
+              }}
+            >
+              <span className="table-history-trigger__icon">
+                <Icon name="book" size={18} />
+              </span>
+              <span className="table-history-trigger__copy">
+                <small>{historyStatus === 'ready' ? `${history.length} 手` : '回看'}</small>
+                <strong>牌谱</strong>
+              </span>
+            </button>
+            <IconButton icon="settings" label="牌桌设置" onClick={() => setSettingsOpen(true)} />
+          </div>
+        </header>
+        <div className={`acting-banner ${isMyTurn ? 'acting-banner--mine' : ''}`}>
+          <progress className="acting-progress" max={1} value={timerProgress} aria-hidden="true" />
+          <span className="sr-only" aria-live="polite">
+            {actingAnnouncement}
+          </span>
+          <span className="turn-ring">
+            <Icon name="clock" size={17} />
+          </span>
+          <strong>
+            {room.status === 'DISPUTED' || room.status === 'ARCHIVED'
+              ? statusLabel[room.status]
+              : room.prompt
+                ? isMyTurn
+                  ? `轮到你行动 · ${seconds} 秒`
+                  : actingCopy(enhancedRoom, seconds)
+                : room.nextHandAt
+                  ? `${seconds} 秒后开始下一手`
+                  : statusLabel[room.status]}
+          </strong>
+        </div>
+        {(connection.error || pageError || notice) && (
+          <div className="table-notice-wrap">
+            {connection.error && (
+              <ErrorBox onClose={connection.clearError}>{connection.error}</ErrorBox>
+            )}
+            {pageError && <ErrorBox onClose={() => setPageError(null)}>{pageError}</ErrorBox>}
+            {notice && (
+              <div className="success-box" role="status">
+                {notice}
+              </div>
+            )}
+          </div>
+        )}
+        <div className="table-layout real-table-layout">
+          <section className="table-column">
+            <div className="table-mode-row">
+              <ModeBadge mode={room.mode} />
+              <span>{room.phase ? (phaseLabel[room.phase] ?? room.phase) : '等待开始'}</span>
+            </div>
+            <PokerTable
+              room={enhancedRoom}
+              meId={me?.playerId ?? ''}
+              holeCards={me?.holeCards ?? []}
+              peekedCards={canPeek && peeking ? peekCards : null}
+              canClaim={Boolean(me && !commandsDisabled && me.seat === null)}
+              claimingSeat={claimingSeat}
+              onClaim={(seat) => void claimSeat(seat)}
+            />
+          </section>
+          <section className="operation-column">
+            <fieldset
+              className="command-surface"
+              disabled={commandsDisabled || (isMyTurn && !me?.turnToken)}
+              aria-busy={connection.busy}
+            >
+              {publicView || !me ? (
+                <WaitingPanel icon="eye" title="正在旁观" />
+              ) : frozen ? (
+                <WaitingPanel icon="pause" title={statusLabel[room.status] ?? room.status} />
+              ) : !mySeat ? (
+                <WaitingPanel icon="user" title="等待入座" />
+              ) : room.status === 'LOBBY' || room.status === 'BETWEEN_HANDS' ? (
+                <ReadyConfirmation
+                  room={enhancedRoom}
+                  mySeat={mySeat}
+                  busy={connection.busy}
+                  onReady={() => void send('player.ready')}
+                />
+              ) : room.mode === 'ONLINE' || room.prompt ? (
+                <OnlineActions
+                  key={`${room.roomId}-${room.handNumber}-${room.prompt?.playerId}-${room.prompt?.deadlineAt}`}
+                  room={enhancedRoom}
+                  heroSeat={mySeat}
+                  isMyTurn={isMyTurn}
+                  disabled={!connection.connected || frozen || !me.turnToken}
+                  busy={connection.busy}
+                  seconds={seconds}
+                  canPeek={canPeek}
+                  peeking={peeking}
+                  onTogglePeek={() => setPeeking((current) => !current)}
+                  onAction={(action, amountTo) =>
+                    send(
+                      'hand.act',
+                      { action, ...(amountTo === undefined ? {} : { amountTo }) },
+                      true,
+                    )
+                  }
+                />
+              ) : (
+                <LiveActions
+                  room={room}
+                  meId={me.playerId}
+                  isDealer={isLiveDealer}
+                  seconds={seconds}
+                  onStreet={(street) => void send('live.streetDealt', { street })}
+                  onObject={(proposalId) => void send('live.resultObject', { proposalId })}
+                  onConfirm={(proposalId) => void send('live.resultConfirm', { proposalId })}
+                  onPropose={() => setWinnerForm(true)}
+                />
+              )}
+            </fieldset>
+          </section>
+        </div>
+        {me && mySeat && (
+          <footer className="table-footer quick-actions real-quick-actions">
+            <span>{statusLabel[room.status]}</span>
+            <button
+              onClick={() => void send(mySeat.sittingOut ? 'player.ready' : 'player.sitOut')}
+              disabled={
+                commandsDisabled ||
+                (mySeat.sittingOut && (room.status === 'ACTIVE' || mySeat.stack <= 0))
+              }
+            >
+              <Icon name={mySeat.sittingOut ? 'play' : 'pause'} size={16} />
+              {mySeat.sittingOut ? '返回牌局' : '下一手暂离'}
+            </button>
+            <button
+              onClick={() => void send('stack.topUp', { targetStack: room.settings.stackCap })}
+              disabled={
+                commandsDisabled ||
+                room.status === 'ACTIVE' ||
+                mySeat.stack >= room.settings.stackCap
+              }
+            >
+              <Icon name="chip" size={16} />
+              补充筹码
+            </button>
+          </footer>
         )}
       </div>
-      {(connection.error || pageError || notice) && (
-        <div className="table-notice-wrap">
-          {connection.error && (
-            <ErrorBox onClose={connection.clearError}>{connection.error}</ErrorBox>
-          )}
-          {pageError && <ErrorBox onClose={() => setPageError(null)}>{pageError}</ErrorBox>}
-          {notice && (
-            <div className="success-box" role="status">
-              {notice}
+      {settingsOpen && (
+        <Modal title="牌桌设置" onClose={() => setSettingsOpen(false)}>
+          <dl className="table-settings-list">
+            <div>
+              <dt>牌桌模式</dt>
+              <dd>{room.mode === 'ONLINE' ? '线上牌桌' : '线下牌桌'}</dd>
             </div>
-          )}
-        </div>
+            <div>
+              <dt>盲注</dt>
+              <dd>
+                {room.settings.smallBlind} / {room.settings.bigBlind}
+              </dd>
+            </div>
+            <div>
+              <dt>初始筹码</dt>
+              <dd>{formatPoints(room.settings.startingStack)}</dd>
+            </div>
+            <div>
+              <dt>筹码上限</dt>
+              <dd>{formatPoints(room.settings.stackCap)}</dd>
+            </div>
+            <div>
+              <dt>行动时限</dt>
+              <dd>{room.settings.actionTimeoutSeconds} 秒</dd>
+            </div>
+          </dl>
+          <label className="motion-setting">
+            <span>牌桌动画</span>
+            <input
+              type="checkbox"
+              checked={motion}
+              onChange={(event) => setMotion(event.target.checked)}
+            />
+          </label>
+        </Modal>
       )}
-      <div className="table-layout real-table-layout">
-        <section className="table-column">
-          <div className="table-mode-row">
-            <ModeBadge mode={room.mode} />
-            <span>{room.phase ? (phaseLabel[room.phase] ?? room.phase) : '等待开始'}</span>
-          </div>
-          <PokerTable
-            room={enhancedRoom}
-            meId={me?.playerId ?? ''}
-            holeCards={me?.holeCards ?? []}
-            peekedCards={canPeek && peeking ? peekCards : null}
-            canClaim={Boolean(me && !frozen && !connection.busy && me.seat === null)}
-            claimingSeat={claimingSeat}
-            onClaim={(seat) => void claimSeat(seat)}
-          />
-          {me && (
-            <div className="quick-actions real-quick-actions">
-              <button
-                onClick={() => void send('player.ready')}
-                disabled={
-                  frozen || connection.busy || mySeat?.ready === true || readyEligibleCount < 2
-                }
-              >
-                <span>
-                  <Icon name="check" size={19} />
-                </span>
-                <small>
-                  {readyEligibleCount < 2 ? '等待玩家' : mySeat?.ready ? '已准备' : '准备下一手'}
-                </small>
-              </button>
-              <button
-                onClick={() => void send('player.sitOut')}
-                disabled={frozen || connection.busy}
-              >
-                <span>
-                  <Icon name="pause" size={19} />
-                </span>
-                <small>下一手暂离</small>
-              </button>
-              <button
-                onClick={() => void send('stack.topUp', { targetStack: room.settings.stackCap })}
-                disabled={
-                  room.status === 'ACTIVE' ||
-                  frozen ||
-                  connection.busy ||
-                  (mySeat?.stack ?? 0) >= room.settings.stackCap
-                }
-              >
-                <span>
-                  <Icon name="chip" size={19} />
-                </span>
-                <small>补至 {formatPoints(room.settings.stackCap)}</small>
-              </button>
-            </div>
-          )}
-        </section>
-        <section className="operation-column">
-          <fieldset className="command-surface" disabled={connection.busy || frozen}>
-            {publicView || !me ? (
-              <WaitingPanel icon="eye" title="正在旁观" />
-            ) : room.status === 'LOBBY' || room.status === 'BETWEEN_HANDS' ? (
-              <ReadyConfirmation
-                room={enhancedRoom}
-                mySeat={mySeat}
-                busy={connection.busy}
-                onReady={() => void send('player.ready')}
-              />
-            ) : room.mode === 'ONLINE' || room.prompt ? (
-              <OnlineActions
-                room={enhancedRoom}
-                heroSeat={mySeat}
-                isMyTurn={isMyTurn}
-                seconds={seconds}
-                canPeek={canPeek}
-                peeking={peeking}
-                onTogglePeek={() => setPeeking((current) => !current)}
-                onAction={(action, amountTo) =>
-                  void send(
-                    'hand.act',
-                    { action, ...(amountTo === undefined ? {} : { amountTo }) },
-                    true,
-                  )
-                }
-              />
-            ) : (
-              <LiveActions
-                room={room}
-                meId={me.playerId}
-                isDealer={isLiveDealer}
-                seconds={seconds}
-                onStreet={(street) => void send('live.streetDealt', { street })}
-                onObject={(proposalId) => void send('live.resultObject', { proposalId })}
-                onConfirm={(proposalId) => void send('live.resultConfirm', { proposalId })}
-                onPropose={() => setWinnerForm(true)}
-              />
-            )}
-          </fieldset>
-        </section>
-      </div>
       {winnerForm && (
         <LiveWinnerDialog
           room={room}
+          disabled={commandsDisabled || !isLiveDealer}
           onClose={() => setWinnerForm(false)}
           onSubmit={(winnersByPot) => connection.send('live.resultPropose', { winnersByPot })}
         />
@@ -354,17 +447,6 @@ export function RoomPage({ roomId }: { roomId: string }) {
           error={historyError}
           onRetry={() => void loadHistory()}
           onClose={() => setHistoryOpen(false)}
-        />
-      )}
-      {me && room.prompt && isMyTurn && (
-        <MobileActionDock
-          room={enhancedRoom}
-          heroSeat={mySeat}
-          seconds={seconds}
-          busy={connection.busy || frozen}
-          onAction={(action, amountTo) =>
-            void send('hand.act', { action, ...(amountTo === undefined ? {} : { amountTo }) }, true)
-          }
         />
       )}
     </main>
@@ -390,6 +472,7 @@ function PokerTable({
 }) {
   const totalPot = room.pots.reduce((sum, pot) => sum + pot.amount, 0);
   const positions = positionsForRoom(room);
+  const heroSeatIndex = room.seats.find((seat) => seat.playerId === meId)?.seat ?? 0;
   return (
     <section
       className={`table-arena table-arena--${room.mode.toLowerCase()} real-table-arena`}
@@ -419,16 +502,6 @@ function PokerTable({
                   <span className="card-placeholder" key={index} />
                 ))}
               </div>
-              <div className="hero-cards" role="group" aria-label="你的手牌">
-                {holeCards.map((card) => (
-                  <PlayingCard
-                    card={card}
-                    key={`${room.handNumber}-${card}`}
-                    compact
-                    dealIndex={0}
-                  />
-                ))}
-              </div>
             </>
           ) : (
             <div className="live-center">
@@ -450,6 +523,9 @@ function PokerTable({
         <Seat
           key={seat.seat}
           seat={seat}
+          visualSeat={(seat.seat - heroSeatIndex + 6) % 6}
+          handNumber={room.handNumber}
+          holeCards={seat.playerId === meId ? holeCards : []}
           own={seat.playerId === meId}
           positions={positions.get(seat.seat) ?? []}
           peekedCards={
@@ -466,6 +542,9 @@ function PokerTable({
 
 function Seat({
   seat,
+  visualSeat,
+  handNumber,
+  holeCards,
   own,
   positions,
   peekedCards,
@@ -474,6 +553,9 @@ function Seat({
   onClaim,
 }: {
   seat: EnhancedSeat;
+  visualSeat: number;
+  handNumber: number;
+  holeCards: Card[];
   own: boolean;
   positions: TablePosition[];
   peekedCards: Card[] | null;
@@ -485,7 +567,7 @@ function Seat({
     return (
       <button
         type="button"
-        className={`table-seat table-seat--${seat.seat} table-seat--empty`}
+        className={`table-seat table-seat--${visualSeat} table-seat--empty`}
         data-testid={`seat-${seat.seat}`}
         aria-label={
           claiming
@@ -512,9 +594,11 @@ function Seat({
           ? '暂离'
           : !seat.connected
             ? '离线'
-            : seat.ready
-              ? '已准备'
-              : '已入座';
+            : seat.hasCards
+              ? '等待行动'
+              : seat.ready
+                ? '已准备'
+                : '已入座';
   const stateClass = seat.isActing
     ? 'table-seat--status-acting'
     : seat.folded
@@ -522,46 +606,71 @@ function Seat({
       : seat.sittingOut
         ? 'table-seat--status-sit_out'
         : '';
+  const visibleCards = own && holeCards.length ? holeCards : (seat.revealedCards ?? peekedCards);
   return (
     <div
-      className={`table-seat table-seat--${seat.seat} ${own ? 'table-seat--own' : ''} ${stateClass}`}
+      className={`table-seat table-seat--${visualSeat} ${own ? 'table-seat--own' : ''} ${stateClass}`}
+      data-testid={`player-seat-${seat.seat}`}
+      data-state={status}
+      aria-label={`${seat.nickname}${own ? '，你' : ''}，${formatPoints(seat.stack)} 筹码，${status}`}
     >
+      {visibleCards?.length ? (
+        <div
+          className={`seat-cards ${own ? 'hero-cards' : 'revealed-cards'} ${peekedCards ? 'revealed-cards--peek' : ''}`}
+          role="group"
+          aria-label={own ? '你的手牌' : `${seat.nickname} 的手牌`}
+        >
+          {visibleCards.map((card, index) => (
+            <PlayingCard card={card} key={`${handNumber}-${card}`} compact dealIndex={index} />
+          ))}
+        </div>
+      ) : seat.hasCards && !seat.folded ? (
+        <div className="seat-cards concealed-cards" aria-label="两张未公开手牌">
+          <span className="card-back">
+            <Icon name="spade" size={19} />
+          </span>
+          <span className="card-back">
+            <Icon name="spade" size={19} />
+          </span>
+        </div>
+      ) : null}
       <div className="seat-avatar">
         <span className="mini-avatar">{seat.nickname?.slice(0, 1)}</span>
-        {positions.length > 0 && <b title={positionLabel(positions)}>{positions.join('/')}</b>}
       </div>
       <div className="seat-copy">
-        <strong>{own ? '你' : seat.nickname}</strong>
+        <strong title={seat.nickname ?? undefined}>
+          {seat.nickname}
+          {own && <em>你</em>}
+        </strong>
         <span>
           <Icon name="chip" size={12} /> {formatPoints(seat.stack)}
         </span>
-        <small>
-          {status}
-          {seat.committedHand ? ` · 已投 ${seat.committedHand}` : ''}
-        </small>
+        <small>{status}</small>
       </div>
-      {seat.revealedCards && (
-        <div className="revealed-cards">
-          {seat.revealedCards.map((card, index) => (
-            <PlayingCard card={card} key={card} compact dealIndex={index} />
-          ))}
-        </div>
+      {positions.length > 0 && (
+        <b
+          className={`seat-position ${positions.includes('BTN') ? 'seat-position--dealer' : ''}`}
+          title={positionLabel(positions)}
+        >
+          {positions.includes('BTN') ? 'D' : positions.join('/')}
+        </b>
       )}
-      {!seat.revealedCards && peekedCards && (
-        <div className="revealed-cards revealed-cards--peek" aria-label={`${seat.nickname} 的手牌`}>
-          {peekedCards.map((card, index) => (
-            <PlayingCard card={card} key={card} compact dealIndex={index} />
-          ))}
+      {seat.committedStreet > 0 && (
+        <div className="seat-bet" key={`${handNumber}-${seat.committedStreet}`}>
+          <Icon name="chip" size={13} />
+          <span>{formatPoints(seat.committedStreet)}</span>
         </div>
       )}
     </div>
   );
 }
 
-function OnlineActions({
+export function OnlineActions({
   room,
   heroSeat,
   isMyTurn,
+  disabled = false,
+  busy = false,
   seconds,
   canPeek,
   peeking,
@@ -571,16 +680,23 @@ function OnlineActions({
   room: EnhancedRoomProjection;
   heroSeat: EnhancedSeat | null;
   isMyTurn: boolean;
+  disabled?: boolean;
+  busy?: boolean;
   seconds: number;
   canPeek: boolean;
   peeking: boolean;
   onTogglePeek: () => void;
-  onAction: (action: PlayerAction, amountTo?: number) => void;
+  onAction: (action: PlayerAction, amountTo?: number) => Promise<boolean>;
 }) {
   const prompt = room.prompt;
   const minimum = prompt?.minRaiseTo ?? prompt?.minBetTo ?? 0;
   const [amountInput, setAmountInput] = useState(String(minimum));
-  useEffect(() => setAmountInput(String(minimum)), [minimum, room.serverSeq]);
+  const [confirmAllIn, setConfirmAllIn] = useState(false);
+  const [pending, setPending] = useState(false);
+  const [actionError, setActionError] = useState<string | null>(null);
+  useEffect(() => {
+    if (disabled) setConfirmAllIn(false);
+  }, [disabled]);
   if (room.status !== 'ACTIVE') return <WaitingPanel icon="check" title="等待下一手" />;
   if (heroSeat?.folded) {
     return (
@@ -595,12 +711,12 @@ function OnlineActions({
             >
               <Icon name="eye" size={17} /> {peeking ? '收起手牌' : '旁观其他玩家手牌'}
             </button>
-            {peeking && <p className="peek-hint">仅你可见，其他玩家不会收到提示</p>}
           </>
         )}
       </WaitingPanel>
     );
   }
+  if (heroSeat?.allIn) return <WaitingPanel icon="chip" title="你已全下" />;
   if (!isMyTurn || !prompt) return <WaitingPanel icon="clock" title="等待其他玩家行动" />;
   const actions = new Set(prompt.legalActions);
   const wagerAction: PlayerAction | null = actions.has('RAISE_TO')
@@ -615,35 +731,26 @@ function OnlineActions({
     Number.isInteger(amount) &&
     amount >= minimum &&
     amount <= prompt.maxTo;
-  const timerPercent = Math.max(0, Math.min(1, seconds / room.settings.actionTimeoutSeconds)) * 100;
+  const submit = async (action: PlayerAction, amountTo?: number) => {
+    setPending(true);
+    setActionError(null);
+    try {
+      if (await onAction(action, amountTo)) setConfirmAllIn(false);
+      else setActionError('操作未成功，请重试');
+    } catch {
+      setActionError('操作未成功，请重试');
+    } finally {
+      setPending(false);
+    }
+  };
   return (
     <section className="operation-panel online-panel">
       <div className="operation-head">
-        <div>
-          <h2>轮到你行动</h2>
-        </div>
-        <span className="turn-timer">
-          <span className="turn-timer-ring">
-            <svg viewBox="0 0 42 42" aria-hidden="true">
-              <circle className="turn-timer-track" cx="21" cy="21" r="18" pathLength="100" />
-              <circle
-                className="turn-timer-value"
-                cx="21"
-                cy="21"
-                r="18"
-                pathLength="100"
-                strokeDasharray="100"
-                strokeDashoffset={100 - timerPercent}
-              />
-            </svg>
-            <i>{seconds}</i>
-          </span>
-          <small>秒</small>
+        <h2>轮到你行动</h2>
+        <span className={`turn-timer ${seconds <= 10 ? 'turn-timer--urgent' : ''}`}>
+          <Icon name="clock" size={15} />
+          {seconds} 秒
         </span>
-      </div>
-      <div className="call-summary">
-        <span>需跟注</span>
-        <strong>{formatPoints(prompt.callAmount)}</strong>
       </div>
       {wagerAction && minimum <= prompt.maxTo && (
         <div className="raise-control">
@@ -675,7 +782,6 @@ function OnlineActions({
                 onClick={() => setAmountInput(String(suggestion.amountTo))}
               >
                 <strong>{suggestion.label}</strong>
-                <small>{formatPoints(suggestion.amountTo)}</small>
               </button>
             ))}
           </div>
@@ -684,7 +790,7 @@ function OnlineActions({
             type="range"
             min={minimum}
             max={prompt.maxTo}
-            step={room.settings.smallBlind}
+            step="1"
             value={amountValid ? amount : minimum}
             onChange={(event) => setAmountInput(event.target.value)}
           />
@@ -699,38 +805,74 @@ function OnlineActions({
           )}
         </div>
       )}
-      <div className="poker-actions real-poker-actions">
+      <div className="poker-actions real-poker-actions" aria-label="行动操作区">
         {actions.has('FOLD') && (
-          <button className="fold-button" onClick={() => onAction('FOLD')}>
+          <button className="fold-button" disabled={pending} onClick={() => void submit('FOLD')}>
             <Icon name="close" size={16} /> 弃牌
           </button>
         )}
         {actions.has('CHECK') && (
-          <button className="call-button" onClick={() => onAction('CHECK')}>
+          <button className="call-button" disabled={pending} onClick={() => void submit('CHECK')}>
             <Icon name="check" size={16} /> 过牌
           </button>
         )}
         {actions.has('CALL') && (
-          <button className="call-button" onClick={() => onAction('CALL')}>
+          <button
+            className="call-button"
+            disabled={pending}
+            onClick={() =>
+              prompt.callAmount >= (heroSeat?.stack ?? Infinity)
+                ? setConfirmAllIn(true)
+                : void submit('CALL')
+            }
+          >
             <Icon name="chip" size={16} /> 跟注 {formatPoints(prompt.callAmount)}
           </button>
         )}
         {wagerAction && (
           <button
             className="raise-button"
-            disabled={!amountValid}
-            onClick={() => onAction(wagerAction, amount)}
+            disabled={!amountValid || pending}
+            onClick={() =>
+              amount === prompt.maxTo ? setConfirmAllIn(true) : void submit(wagerAction, amount)
+            }
           >
             {wagerAction === 'BET_TO' ? '下注到' : '加注到'}{' '}
             {amountValid ? formatPoints(amount) : '—'}
           </button>
         )}
         {actions.has('ALL_IN') && (
-          <button className="allin-button" onClick={() => onAction('ALL_IN')}>
-            全下 {formatPoints(prompt.maxTo)}
+          <button className="allin-button" disabled={pending} onClick={() => setConfirmAllIn(true)}>
+            全下
           </button>
         )}
       </div>
+      {confirmAllIn && (
+        <Modal title="确认全下" onClose={() => setConfirmAllIn(false)} locked={pending || busy}>
+          {actionError && <ErrorBox>{actionError}</ErrorBox>}
+          <div className="allin-confirmation">
+            <Icon name="chip" size={28} />
+            <strong>{formatPoints(heroSeat?.stack ?? prompt.maxTo)}</strong>
+            <span>剩余筹码</span>
+          </div>
+          <div className="proposal-actions">
+            <button
+              className="secondary-button"
+              disabled={pending}
+              onClick={() => setConfirmAllIn(false)}
+            >
+              取消
+            </button>
+            <button
+              className="primary-button"
+              disabled={pending || busy || disabled}
+              onClick={() => void submit(actions.has('ALL_IN') ? 'ALL_IN' : 'CALL')}
+            >
+              {pending ? '提交中…' : '确认全下'}
+            </button>
+          </div>
+        </Modal>
+      )}
     </section>
   );
 }
@@ -755,7 +897,7 @@ function WaitingPanel({
   );
 }
 
-function ReadyConfirmation({
+export function ReadyConfirmation({
   room,
   mySeat,
   busy,
@@ -771,7 +913,6 @@ function ReadyConfirmation({
   );
   const ready = room.readyCount ?? eligible.filter((seat) => seat.ready).length;
   const required = room.requiredReadyCount ?? eligible.length;
-  const enoughPlayers = eligible.length >= 2;
   return (
     <section className="operation-panel ready-panel">
       <div className="ready-head">
@@ -779,7 +920,7 @@ function ReadyConfirmation({
           <Icon name="check" size={22} />
         </span>
         <div>
-          <h2>准备下一手</h2>
+          <h2>{room.handNumber === 0 ? '等待开牌' : '准备下一手'}</h2>
         </div>
         <strong>
           {ready}
@@ -807,179 +948,20 @@ function ReadyConfirmation({
       {mySeat ? (
         <button
           className="primary-button ready-button"
-          disabled={
-            busy ||
-            mySeat.ready ||
-            !enoughPlayers ||
-            !eligible.some((seat) => seat.playerId === mySeat.playerId)
-          }
+          disabled={busy || mySeat.ready || !mySeat.connected || mySeat.stack <= 0}
           onClick={onReady}
         >
           <Icon name="check" size={18} />{' '}
-          {!enoughPlayers ? '等待玩家' : mySeat.ready ? '已准备' : '准备下一手'}
+          {mySeat.ready
+            ? '已准备'
+            : mySeat.sittingOut
+              ? '返回并准备'
+              : mySeat.stack <= 0
+                ? '等待补充筹码'
+                : '准备下一手'}
         </button>
       ) : null}
     </section>
-  );
-}
-
-function MobileActionDock({
-  room,
-  heroSeat,
-  seconds,
-  busy,
-  onAction,
-}: {
-  room: EnhancedRoomProjection;
-  heroSeat: EnhancedSeat | null;
-  seconds: number;
-  busy: boolean;
-  onAction: (action: PlayerAction, amountTo?: number) => void;
-}) {
-  const prompt = room.prompt!;
-  const actions = new Set(prompt.legalActions);
-  const wagerAction: PlayerAction | null = actions.has('RAISE_TO')
-    ? 'RAISE_TO'
-    : actions.has('BET_TO')
-      ? 'BET_TO'
-      : null;
-  const minimum = prompt.minRaiseTo ?? prompt.minBetTo ?? 0;
-  const [raiseOpen, setRaiseOpen] = useState(false);
-  const [amountInput, setAmountInput] = useState(String(minimum));
-  useEffect(() => setAmountInput(String(minimum)), [minimum, room.serverSeq]);
-  const amount = Number(amountInput);
-  const valid =
-    amountInput.trim() !== '' &&
-    Number.isInteger(amount) &&
-    amount >= minimum &&
-    amount <= prompt.maxTo;
-  return (
-    <>
-      <div className="mobile-action-dock" role="group" aria-label="行动操作区" aria-busy={busy}>
-        <div className="mobile-turn-copy">
-          <span>轮到你 · {seconds} 秒</span>
-          <small>
-            {prompt.callAmount > 0 ? `跟注 ${formatPoints(prompt.callAmount)}` : '可过牌'}
-          </small>
-        </div>
-        <div className="mobile-action-buttons">
-          {actions.has('FOLD') && (
-            <button disabled={busy} className="fold-button" onClick={() => onAction('FOLD')}>
-              <Icon name="close" size={17} />
-              弃牌
-            </button>
-          )}
-          {actions.has('CHECK') && (
-            <button
-              disabled={busy}
-              className="call-button primary-action"
-              onClick={() => onAction('CHECK')}
-            >
-              <Icon name="check" size={17} />
-              过牌
-            </button>
-          )}
-          {actions.has('CALL') && (
-            <button
-              disabled={busy}
-              className="call-button primary-action"
-              onClick={() => onAction('CALL')}
-            >
-              <Icon name="chip" size={17} />
-              跟注 {formatPoints(prompt.callAmount)}
-            </button>
-          )}
-          {wagerAction && (
-            <button disabled={busy} className="raise-button" onClick={() => setRaiseOpen(true)}>
-              {wagerAction === 'BET_TO' ? '下注' : '加注'}
-            </button>
-          )}
-          {!wagerAction && actions.has('ALL_IN') && (
-            <button disabled={busy} className="allin-button" onClick={() => onAction('ALL_IN')}>
-              全下 {formatPoints(prompt.maxTo)}
-            </button>
-          )}
-        </div>
-      </div>
-      {raiseOpen && wagerAction && (
-        <Modal
-          title={wagerAction === 'BET_TO' ? '下注到' : '加注到'}
-          onClose={() => setRaiseOpen(false)}
-        >
-          <div className="mobile-wager-sheet">
-            <label className="amount-input">
-              <Icon name="chip" size={18} />
-              <input
-                type="number"
-                min={minimum}
-                max={prompt.maxTo}
-                step="1"
-                inputMode="numeric"
-                value={amountInput}
-                onChange={(event) => setAmountInput(event.target.value)}
-                aria-label="精确输入下注后总投入"
-                aria-invalid={!valid}
-                aria-describedby={valid ? undefined : 'mobile-wager-error'}
-              />
-            </label>
-            <div className="bet-suggestions">
-              {betSuggestions(room, heroSeat).map((suggestion) => (
-                <button
-                  type="button"
-                  className={amount === suggestion.amountTo ? 'active' : ''}
-                  aria-pressed={amount === suggestion.amountTo}
-                  key={`${suggestion.semantic}-${suggestion.amountTo}`}
-                  onClick={() => setAmountInput(String(suggestion.amountTo))}
-                >
-                  <strong>{suggestion.label}</strong>
-                  <small>{formatPoints(suggestion.amountTo)}</small>
-                </button>
-              ))}
-            </div>
-            <input
-              type="range"
-              min={minimum}
-              max={prompt.maxTo}
-              step={room.settings.smallBlind}
-              value={valid ? amount : minimum}
-              onChange={(event) => setAmountInput(event.target.value)}
-              aria-label={wagerAction === 'BET_TO' ? '下注到' : '加注到'}
-            />
-            <div className="range-bounds">
-              <span>最小 {formatPoints(minimum)}</span>
-              <span>最大 {formatPoints(prompt.maxTo)}</span>
-            </div>
-            {!valid && (
-              <small id="mobile-wager-error" className="field-error" role="alert">
-                请输入 {formatPoints(minimum)} 至 {formatPoints(prompt.maxTo)} 之间的整数。
-              </small>
-            )}
-            <button
-              className="primary-button"
-              disabled={!valid || busy}
-              onClick={() => {
-                onAction(wagerAction, amount);
-                setRaiseOpen(false);
-              }}
-            >
-              {wagerAction === 'BET_TO' ? '下注到' : '加注到'} {valid ? formatPoints(amount) : '—'}
-            </button>
-            {actions.has('ALL_IN') && (
-              <button
-                className="secondary-button"
-                disabled={busy}
-                onClick={() => {
-                  onAction('ALL_IN');
-                  setRaiseOpen(false);
-                }}
-              >
-                全下 {formatPoints(prompt.maxTo)}
-              </button>
-            )}
-          </div>
-        </Modal>
-      )}
-    </>
   );
 }
 
@@ -1115,10 +1097,12 @@ function LiveActions({
 
 function LiveWinnerDialog({
   room,
+  disabled,
   onClose,
   onSubmit,
 }: {
   room: PublicRoomProjection;
+  disabled: boolean;
   onClose: () => void;
   onSubmit: (winners: Record<string, string[]>) => Promise<boolean>;
 }) {
@@ -1129,11 +1113,11 @@ function LiveWinnerDialog({
   const [pending, setPending] = useState(false);
   const [error, setError] = useState<string | null>(null);
   return (
-    <Modal title="提交各底池赢家" onClose={onClose}>
+    <Modal title="提交各底池赢家" onClose={onClose} locked={pending}>
       {error && <ErrorBox onClose={() => setError(null)}>{error}</ErrorBox>}
       <div className="winner-pots">
         {room.pots.map((pot) => (
-          <fieldset key={pot.id}>
+          <fieldset key={pot.id} disabled={pending || disabled}>
             <legend>
               {pot.id === 'pot-0' ? '主池' : `边池 ${Number(pot.id.slice(4))}`} · {pot.amount}
             </legend>
@@ -1163,7 +1147,7 @@ function LiveWinnerDialog({
       </div>
       <button
         className="primary-button"
-        disabled={pending || room.pots.some((pot) => !winners[pot.id]?.length)}
+        disabled={disabled || pending || room.pots.some((pot) => !winners[pot.id]?.length)}
         onClick={() => {
           setPending(true);
           setError(null);

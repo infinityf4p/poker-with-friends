@@ -42,18 +42,14 @@ export function useRoom(roomId: string, adminView = false): RoomConnection {
   const socketRef = useRef<Socket | null>(null);
   const pendingRef = useRef(false);
   const revokedRef = useRef(false);
+  const synchronizedRef = useRef(false);
+  const sessionRef = useRef(0);
   const roomRef = useRef<PublicRoomProjection | null>(null);
   const meRef = useRef<PrivatePlayerProjection | null>(null);
 
-  useEffect(() => {
-    roomRef.current = room;
-  }, [room]);
-  useEffect(() => {
-    meRef.current = me;
-  }, [me]);
-
   const applySnapshot = useCallback(
     (snapshot: RoomSnapshotEnvelope): boolean => {
+      if (revokedRef.current) return false;
       if (snapshot.public.roomId !== roomId) {
         setError('当前会话与牌桌不匹配');
         return false;
@@ -63,6 +59,7 @@ export function useRoom(roomId: string, adminView = false): RoomConnection {
       meRef.current = snapshot.private;
       setRoom(snapshot.public);
       setMe(snapshot.private);
+      setLoading(false);
       setError(null);
       return true;
     },
@@ -83,27 +80,45 @@ export function useRoom(roomId: string, adminView = false): RoomConnection {
   );
 
   const refresh = useCallback(async () => {
+    const session = sessionRef.current;
+    const isCurrent = () => session === sessionRef.current && !revokedRef.current;
     try {
-      applySnapshot(
-        await api<RoomSnapshotEnvelope>(
-          adminView ? `/api/admin/rooms/${roomId}/snapshot` : `/api/rooms/${roomId}`,
-        ),
+      const snapshot = await api<RoomSnapshotEnvelope>(
+        adminView ? `/api/admin/rooms/${roomId}/snapshot` : `/api/rooms/${roomId}`,
       );
-      if (adminView) setConnected(true);
+      if (!isCurrent()) return;
+      const applied = applySnapshot(snapshot);
+      if (adminView && applied) setConnected(true);
     } catch (caught) {
+      if (!isCurrent()) return;
+      if (adminView) setConnected(false);
       setError(caught instanceof Error ? caught.message : '牌桌同步失败');
     } finally {
-      setLoading(false);
+      if (isCurrent()) setLoading(false);
     }
   }, [adminView, applySnapshot, roomId]);
 
   useEffect(() => {
+    // Requests and acknowledgements may finish after the room or view changes.
+    const session = ++sessionRef.current;
+    const isCurrent = () => session === sessionRef.current && !revokedRef.current;
+    roomRef.current = null;
+    meRef.current = null;
+    pendingRef.current = false;
+    revokedRef.current = false;
+    synchronizedRef.current = false;
+    setRoom(null);
+    setMe(null);
+    setConnected(false);
+    setBusy(false);
+    setLoading(true);
+    setError(null);
     void refresh();
     if (adminView) {
       const poll = window.setInterval(() => void refresh(), 2_000);
       return () => {
+        sessionRef.current += 1;
         window.clearInterval(poll);
-        setConnected(false);
       };
     }
     const socket = io({
@@ -112,35 +127,83 @@ export function useRoom(roomId: string, adminView = false): RoomConnection {
       withCredentials: true,
       transports: ['websocket', 'polling'],
       reconnection: true,
+      autoConnect: false,
     });
-    revokedRef.current = false;
+    let browserOnline = navigator.onLine !== false;
     socketRef.current = socket;
-    socket.on('connect', () => setConnected(true));
-    socket.on('disconnect', () => setConnected(false));
+    socket.on('connect', () => {
+      if (!isCurrent()) return;
+      synchronizedRef.current = false;
+      setConnected(false);
+    });
+    socket.on('disconnect', () => {
+      if (!isCurrent()) return;
+      synchronizedRef.current = false;
+      setConnected(false);
+    });
     socket.on('connect_error', () => {
-      if (!revokedRef.current) setError('连接失败，正在重试');
+      if (isCurrent() && browserOnline) setError('连接失败，正在重试');
     });
     socket.on('membership.revoked', (payload: { roomId?: string }) => {
+      if (!isCurrent()) return;
       if (payload.roomId && payload.roomId !== roomId) return;
       revokedRef.current = true;
+      synchronizedRef.current = false;
       meRef.current = null;
+      pendingRef.current = false;
       setMe(null);
+      setBusy(false);
+      setLoading(false);
       setConnected(false);
       setError('你已被移出牌桌');
       socket.io.opts.reconnection = false;
       socket.disconnect();
     });
     socket.on('room.snapshot', (snapshot: RoomSnapshotEnvelope) => {
-      if (!applySnapshot(snapshot) && snapshot.public.roomId !== roomId) socket.disconnect();
+      if (!isCurrent() || !browserOnline) return;
+      const applied = applySnapshot(snapshot);
+      if (!applied && snapshot.public.roomId !== roomId) {
+        socket.disconnect();
+        return;
+      }
+      // The server installs command handlers as it finishes sending this snapshot.
+      synchronizedRef.current = true;
+      setConnected(true);
     });
-    socket.on('room.public', applyPublic);
+    socket.on('room.public', (next: PublicRoomProjection) => {
+      if (isCurrent()) applyPublic(next);
+    });
     socket.on('room.private', (next: PrivatePlayerProjection) => {
-      if (next.roomId !== roomId) return;
+      if (!isCurrent() || next.roomId !== roomId) return;
       meRef.current = next;
       setMe(next);
     });
-    socket.on('room.error', (next: { message?: string }) => setError(next.message ?? '牌桌已暂停'));
+    socket.on('room.error', (next: { message?: string }) => {
+      if (isCurrent()) setError(next.message ?? '牌桌已暂停');
+    });
+    const onOffline = () => {
+      if (!isCurrent()) return;
+      browserOnline = false;
+      synchronizedRef.current = false;
+      setConnected(false);
+      setError('网络已断开，等待重新连接');
+      socket.disconnect();
+    };
+    const onOnline = () => {
+      if (!isCurrent()) return;
+      browserOnline = true;
+      synchronizedRef.current = false;
+      setConnected(false);
+      socket.connect();
+    };
+    window.addEventListener('offline', onOffline);
+    window.addEventListener('online', onOnline);
+    if (browserOnline) socket.connect();
+    else onOffline();
     return () => {
+      sessionRef.current += 1;
+      window.removeEventListener('offline', onOffline);
+      window.removeEventListener('online', onOnline);
       socket.removeAllListeners();
       socket.disconnect();
       socketRef.current = null;
@@ -154,13 +217,20 @@ export function useRoom(roomId: string, adminView = false): RoomConnection {
       options: { needsTurnToken?: boolean } = {},
     ): Promise<boolean> => {
       const socket = socketRef.current;
+      const session = sessionRef.current;
       const currentRoom = roomRef.current;
       const currentMe = meRef.current;
       if (pendingRef.current) {
         setError('操作处理中，请稍候');
         return false;
       }
-      if (!socket?.connected || !currentRoom) {
+      if (
+        adminView ||
+        revokedRef.current ||
+        !synchronizedRef.current ||
+        !socket?.connected ||
+        currentRoom?.roomId !== roomId
+      ) {
         setError('连接尚未就绪');
         return false;
       }
@@ -183,6 +253,10 @@ export function useRoom(roomId: string, adminView = false): RoomConnection {
         socket
           .timeout(8_000)
           .emit(event, envelope, (timeoutError: Error | null, result?: CommandResult) => {
+            if (session !== sessionRef.current || revokedRef.current) {
+              resolve(false);
+              return;
+            }
             if (timeoutError || !result) {
               pendingRef.current = false;
               setBusy(false);
@@ -206,7 +280,7 @@ export function useRoom(roomId: string, adminView = false): RoomConnection {
           });
       });
     },
-    [applySnapshot, refresh],
+    [adminView, applySnapshot, refresh, roomId],
   );
 
   return {

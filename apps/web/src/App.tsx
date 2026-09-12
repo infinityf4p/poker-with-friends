@@ -26,7 +26,7 @@ function App() {
 
   if (route.kind === 'admin') return <AdminPage />;
   if (route.kind === 'join') return <JoinPage token={route.token} />;
-  if (route.kind === 'room') return <RoomPage roomId={route.roomId} />;
+  if (route.kind === 'room') return <RoomPage key={route.roomId} roomId={route.roomId} />;
   return <LobbyPage />;
 }
 

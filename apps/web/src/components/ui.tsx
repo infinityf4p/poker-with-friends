@@ -75,11 +75,15 @@ export function IconButton({
   label,
   onClick,
   className = '',
+  disabled = false,
+  busy = false,
 }: {
   icon: IconName;
   label: string;
   onClick: () => void;
   className?: string;
+  disabled?: boolean;
+  busy?: boolean;
 }) {
   return (
     <button
@@ -88,6 +92,8 @@ export function IconButton({
       onClick={onClick}
       aria-label={label}
       title={label}
+      disabled={disabled}
+      aria-busy={busy || undefined}
     >
       <Icon name={icon} />
     </button>
@@ -158,6 +164,9 @@ export function Modal({
   const titleId = useId();
   const dialogRef = useRef<HTMLElement>(null);
   useEffect(() => {
+    if (locked) dialogRef.current?.focus();
+  }, [locked]);
+  useEffect(() => {
     const previousFocus =
       document.activeElement instanceof HTMLElement ? document.activeElement : null;
     const unlockBodyScroll = lockBodyScroll();
@@ -166,7 +175,7 @@ export function Modal({
       const activeElement =
         document.activeElement instanceof HTMLElement ? document.activeElement : null;
       const firstControl = dialogRef.current?.querySelector<HTMLElement>(
-        'button:not([disabled]), input:not([disabled]), select:not([disabled]), textarea:not([disabled])',
+        'button:not(:disabled), input:not(:disabled), select:not(:disabled), textarea:not(:disabled)',
       );
       if (!activeElement || !dialogRef.current?.contains(activeElement)) {
         (firstControl ?? dialogRef.current)?.focus();
@@ -207,10 +216,14 @@ export function Modal({
           event.stopPropagation();
           const controls = Array.from(
             dialogRef.current?.querySelectorAll<HTMLElement>(
-              'button:not([disabled]), input:not([disabled]), select:not([disabled]), textarea:not([disabled]), [tabindex]:not([tabindex="-1"])',
+              'button:not(:disabled), input:not(:disabled), select:not(:disabled), textarea:not(:disabled), [tabindex]:not([tabindex="-1"]):not(:disabled)',
             ) ?? [],
           ).filter((control) => control.offsetParent !== null);
-          if (!controls.length) return;
+          if (!controls.length) {
+            event.preventDefault();
+            dialogRef.current?.focus();
+            return;
+          }
           const first = controls[0]!;
           const last = controls[controls.length - 1]!;
           if (event.shiftKey && document.activeElement === first) {

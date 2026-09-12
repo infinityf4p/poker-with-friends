@@ -1,9 +1,11 @@
-import { useEffect, useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
+import type { RoomMode } from '@poker-with-friends/protocol';
 import { api, type JoinResponse, type LobbyRoomSummary, type UserSession } from '../api';
 import { Icon } from '../icons';
 import { formatPoints, statusLabel } from '../poker-ui';
 import { navigate } from '../navigation';
 import { Brand, ErrorBox, IconButton, Loading, ModeBadge } from '../components/ui';
+import { PlayingCard } from '../components/cards';
 
 export function LobbyPage() {
   const [session, setSession] = useState<UserSession | null>(null);
@@ -12,10 +14,34 @@ export function LobbyPage() {
   const [refreshing, setRefreshing] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [joiningRoomId, setJoiningRoomId] = useState<string | null>(null);
+  const [modeFilter, setModeFilter] = useState<RoomMode | 'ALL'>('ALL');
+  const [availableOnly, setAvailableOnly] = useState(false);
+  const [loggingOut, setLoggingOut] = useState(false);
+  const joiningRef = useRef(false);
+  const refreshingRef = useRef(false);
+  const loggingOutRef = useRef(false);
+  const mountedRef = useRef(false);
+  const sessionGeneration = useRef(0);
+  const roomsRequest = useRef(0);
 
-  const loadRooms = async () => setRooms(await api<LobbyRoomSummary[]>('/api/rooms'));
+  const loadRooms = async () => {
+    const request = ++roomsRequest.current;
+    const generation = sessionGeneration.current;
+    const isCurrent = () =>
+      mountedRef.current &&
+      request === roomsRequest.current &&
+      generation === sessionGeneration.current;
+    try {
+      const updatedRooms = await api<LobbyRoomSummary[]>('/api/rooms');
+      if (isCurrent()) setRooms(updatedRooms);
+    } catch (caught) {
+      if (isCurrent()) throw caught;
+    }
+  };
   const refreshRooms = async () => {
-    if (refreshing) return;
+    if (refreshingRef.current || loggingOutRef.current) return;
+    const generation = sessionGeneration.current;
+    refreshingRef.current = true;
     setRefreshing(true);
     setError(null);
     try {
@@ -23,24 +49,40 @@ export function LobbyPage() {
     } catch (caught) {
       setError(caught instanceof Error ? caught.message : '牌桌列表刷新失败');
     } finally {
+      if (!mountedRef.current || generation !== sessionGeneration.current) return;
+      refreshingRef.current = false;
       setRefreshing(false);
     }
   };
   useEffect(() => {
+    mountedRef.current = true;
+    const generation = sessionGeneration.current;
+    const isCurrent = () => mountedRef.current && generation === sessionGeneration.current;
     api<UserSession>('/api/auth/session')
       .then((user) => {
+        if (!isCurrent()) return;
         setSession(user);
         return loadRooms().catch((caught) =>
           setError(caught instanceof Error ? caught.message : '牌桌列表加载失败'),
         );
       })
-      .catch(() => setSession(null))
-      .finally(() => setChecking(false));
+      .catch(() => {
+        if (isCurrent()) setSession(null);
+      })
+      .finally(() => {
+        if (isCurrent()) setChecking(false);
+      });
+    return () => {
+      mountedRef.current = false;
+      sessionGeneration.current += 1;
+    };
   }, []);
 
   useEffect(() => {
     if (!session) return;
-    const refresh = () => void loadRooms().catch(() => undefined);
+    const refresh = () => {
+      if (!loggingOutRef.current) void loadRooms().catch(() => undefined);
+    };
     const interval = window.setInterval(refresh, 6_000);
     window.addEventListener('focus', refresh);
     return () => {
@@ -50,6 +92,7 @@ export function LobbyPage() {
   }, [session?.id]);
 
   const enterRoom = async (room: LobbyRoomSummary) => {
+    if (joiningRef.current || loggingOutRef.current) return;
     if (room.membership && room.membership.status !== 'KICKED') {
       navigate(`/room/${room.roomId}`);
       return;
@@ -62,6 +105,9 @@ export function LobbyPage() {
       setError('牌桌已满');
       return;
     }
+    joiningRef.current = true;
+    const generation = sessionGeneration.current;
+    const isCurrent = () => mountedRef.current && generation === sessionGeneration.current;
     setJoiningRoomId(room.roomId);
     setError(null);
     try {
@@ -69,14 +115,46 @@ export function LobbyPage() {
         method: 'POST',
         body: JSON.stringify({}),
       });
-      navigate(`/room/${joined.roomId}`);
+      if (isCurrent()) navigate(`/room/${joined.roomId}`);
     } catch (caught) {
+      if (!isCurrent()) return;
       setError(caught instanceof Error ? caught.message : '加入牌桌失败');
       await loadRooms().catch(() => undefined);
     } finally {
+      if (!isCurrent()) return;
+      joiningRef.current = false;
       setJoiningRoomId(null);
     }
   };
+
+  const logout = async () => {
+    if (loggingOutRef.current || joiningRef.current) return;
+    loggingOutRef.current = true;
+    setLoggingOut(true);
+    try {
+      await api('/api/auth/logout', { method: 'POST' });
+      if (!mountedRef.current) return;
+      sessionGeneration.current += 1;
+      refreshingRef.current = false;
+      setRefreshing(false);
+      setSession(null);
+      setRooms([]);
+      setError(null);
+    } catch (caught) {
+      if (mountedRef.current) {
+        setError(caught instanceof Error ? caught.message : '退出登录失败');
+      }
+    } finally {
+      loggingOutRef.current = false;
+      if (mountedRef.current) setLoggingOut(false);
+    }
+  };
+
+  const visibleRooms = rooms.filter((room) => {
+    const canEnter =
+      room.membership?.status !== 'KICKED' && (room.availableSeats > 0 || room.membership !== null);
+    return (modeFilter === 'ALL' || room.mode === modeFilter) && (!availableOnly || canEnter);
+  });
 
   if (checking) return <Loading />;
   if (!session) {
@@ -84,16 +162,23 @@ export function LobbyPage() {
       <UserLogin
         error={error}
         onSubmit={async (username, password) => {
+          const generation = sessionGeneration.current;
           try {
             const user = await api<UserSession>('/api/auth/login', {
               method: 'POST',
               body: JSON.stringify({ username, password }),
             });
+            if (!mountedRef.current || generation !== sessionGeneration.current) return;
+            sessionGeneration.current += 1;
             setSession(user);
             setError(null);
-            await loadRooms();
+            await loadRooms().catch((caught) =>
+              setError(caught instanceof Error ? caught.message : '牌桌列表加载失败'),
+            );
           } catch (caught) {
-            setError(caught instanceof Error ? caught.message : '登录失败');
+            if (mountedRef.current && generation === sessionGeneration.current) {
+              setError(caught instanceof Error ? caught.message : '登录失败');
+            }
           }
         }}
       />
@@ -114,19 +199,15 @@ export function LobbyPage() {
           </div>
           <IconButton
             icon="logout"
-            label="退出登录"
-            onClick={() => {
-              void api('/api/auth/logout', { method: 'POST' })
-                .then(() => setSession(null))
-                .catch((caught) =>
-                  setError(caught instanceof Error ? caught.message : '退出登录失败'),
-                );
-            }}
+            label={loggingOut ? '正在退出登录' : '退出登录'}
+            disabled={joiningRoomId !== null || loggingOut}
+            busy={loggingOut}
+            onClick={() => void logout()}
           />
         </div>
       </header>
       <div className="page-container lobby-content">
-        <section className="lobby-hero">
+        <section className="lobby-heading">
           <div>
             <h1>牌桌大厅</h1>
           </div>
@@ -145,35 +226,72 @@ export function LobbyPage() {
           </div>
         </section>
         {error && <ErrorBox onClose={() => setError(null)}>{error}</ErrorBox>}
-        <section className="lobby-room-section" aria-labelledby="all-rooms-heading">
-          <header>
-            <div>
-              <h2 id="all-rooms-heading">全部牌桌</h2>
+        <section className="lobby-room-section" aria-label="浏览牌桌">
+          <header className="lobby-room-toolbar">
+            <div className="lobby-filters" role="group" aria-label="牌桌类型">
+              {(
+                [
+                  ['ALL', '全部'],
+                  ['ONLINE', '线上'],
+                  ['LIVE', '线下'],
+                ] as const
+              ).map(([mode, label]) => (
+                <button
+                  type="button"
+                  key={mode}
+                  className="lobby-filter"
+                  aria-pressed={modeFilter === mode}
+                  onClick={() => setModeFilter(mode)}
+                >
+                  {label}
+                </button>
+              ))}
             </div>
-            <button
-              type="button"
-              className="lobby-refresh"
-              onClick={() => void refreshRooms()}
-              disabled={refreshing}
-              aria-busy={refreshing}
-              aria-label="刷新牌桌列表"
-            >
-              <Icon name="refresh" size={16} /> {refreshing ? '刷新中' : '刷新'}
-            </button>
+            <div className="lobby-filter-controls">
+              <label className="lobby-available-filter">
+                <input
+                  type="checkbox"
+                  checked={availableOnly}
+                  onChange={(event) => setAvailableOnly(event.target.checked)}
+                />
+                <span>仅可加入</span>
+              </label>
+              <IconButton
+                icon="refresh"
+                label={refreshing ? '正在刷新牌桌列表' : '刷新牌桌列表'}
+                className="lobby-refresh"
+                onClick={() => void refreshRooms()}
+                disabled={refreshing || loggingOut}
+                busy={refreshing}
+              />
+            </div>
           </header>
-          <div className="lobby-room-grid">
-            {rooms.map((room) => (
+          <div className="lobby-room-grid" aria-label="牌桌列表">
+            {visibleRooms.map((room) => (
               <LobbyRoomCard
                 key={room.roomId}
                 room={room}
                 joining={joiningRoomId === room.roomId}
+                disabled={joiningRoomId !== null || loggingOut}
                 onEnter={() => void enterRoom(room)}
               />
             ))}
-            {rooms.length === 0 && (
+            {visibleRooms.length === 0 && (
               <div className="empty-state rich-empty lobby-room-empty">
                 <Icon name="table" size={32} />
-                <strong>暂无牌桌</strong>
+                <strong>{rooms.length === 0 ? '暂无牌桌' : '暂无符合条件的牌桌'}</strong>
+                {rooms.length > 0 && (
+                  <button
+                    type="button"
+                    className="text-button"
+                    onClick={() => {
+                      setModeFilter('ALL');
+                      setAvailableOnly(false);
+                    }}
+                  >
+                    清除筛选
+                  </button>
+                )}
               </div>
             )}
           </div>
@@ -189,10 +307,12 @@ export function LobbyPage() {
 function LobbyRoomCard({
   room,
   joining,
+  disabled,
   onEnter,
 }: {
   room: LobbyRoomSummary;
   joining: boolean;
+  disabled: boolean;
   onEnter: () => void;
 }) {
   const joined = Boolean(room.membership && room.membership.status !== 'KICKED');
@@ -286,7 +406,7 @@ function LobbyRoomCard({
             <>
               <Icon name="door" size={15} />
               <span>
-                <strong>{full ? '牌桌已满' : '可直接加入'}</strong>
+                <strong>{blocked ? '暂不能加入' : full ? '牌桌已满' : '可直接加入'}</strong>
               </span>
             </>
           )}
@@ -296,7 +416,8 @@ function LobbyRoomCard({
           data-testid={`join-room-${room.roomId}`}
           className={joined ? 'secondary-button' : 'primary-button'}
           onClick={onEnter}
-          disabled={joining || blocked || full}
+          disabled={disabled || blocked || full}
+          aria-busy={joining || undefined}
         >
           {actionLabel}
           {!joining && !blocked && !full && <Icon name="arrow-right" size={16} />}
@@ -316,19 +437,15 @@ function UserLogin({
   const [username, setUsername] = useState('');
   const [password, setPassword] = useState('');
   const [pending, setPending] = useState(false);
+  const [passwordVisible, setPasswordVisible] = useState(false);
+  const submittingRef = useRef(false);
   return (
     <main className="login-page account-login">
-      <div className="login-ambient login-ambient--one" />
-      <div className="login-ambient login-ambient--two" />
       <section className="login-card account-login-card">
         <Brand />
-        <div className="login-visual" aria-hidden="true">
-          <span>
-            <Icon name="cards" size={38} />
-          </span>
-          <i />
-          <i />
-          <i />
+        <div className="login-cards" aria-hidden="true">
+          <PlayingCard card="As" />
+          <PlayingCard card="Kh" dealIndex={1} />
         </div>
         <div className="login-heading">
           <h1>登录</h1>
@@ -338,8 +455,13 @@ function UserLogin({
           className="login-form"
           onSubmit={(event) => {
             event.preventDefault();
+            if (submittingRef.current) return;
+            submittingRef.current = true;
             setPending(true);
-            void onSubmit(username.trim(), password).finally(() => setPending(false));
+            void onSubmit(username.trim(), password).finally(() => {
+              submittingRef.current = false;
+              setPending(false);
+            });
           }}
         >
           <label className="field field-with-icon">
@@ -351,6 +473,7 @@ function UserLogin({
                 onChange={(event) => setUsername(event.target.value)}
                 autoComplete="username"
                 autoFocus
+                disabled={pending}
                 required
               />
             </span>
@@ -360,15 +483,30 @@ function UserLogin({
             <span>
               <Icon name="lock" size={18} />
               <input
-                type="password"
+                type={passwordVisible ? 'text' : 'password'}
                 value={password}
                 onChange={(event) => setPassword(event.target.value)}
                 autoComplete="current-password"
+                disabled={pending}
                 required
               />
+              <button
+                type="button"
+                className="password-toggle"
+                aria-label={passwordVisible ? '隐藏密码' : '显示密码'}
+                title={passwordVisible ? '隐藏密码' : '显示密码'}
+                aria-pressed={passwordVisible}
+                onClick={() => setPasswordVisible((visible) => !visible)}
+              >
+                <Icon name={passwordVisible ? 'eye-off' : 'eye'} size={18} />
+              </button>
             </span>
           </label>
-          <button className="primary-button" disabled={pending || !username.trim() || !password}>
+          <button
+            className="primary-button"
+            disabled={pending || !username.trim() || !password}
+            aria-busy={pending || undefined}
+          >
             {pending ? '正在登录…' : '登录'}
             {!pending && <Icon name="arrow-right" size={18} />}
           </button>
