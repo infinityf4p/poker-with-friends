@@ -1,16 +1,21 @@
 import { useEffect, useMemo, useState, type FormEvent } from 'react';
-import type { AdminRoomSummary, RoomMode } from '@poker-with-friends/protocol';
+import type { AdminRoomSummary, RoomMode, TablePosition } from '@poker-with-friends/protocol';
 import {
   api,
   type AdminRoomPlayerSummary,
+  type AdminAccountLedgerEntry,
+  type AdminHandHistoryItem,
   type AdminSession,
   type AdminUserSummary,
   type CreateRoomResponse,
 } from '../api';
 import { Icon } from '../icons';
 import { formatPoints, statusLabel } from '../poker-ui';
+import { historyActions, historySettlement, naturalAction, phaseLabel } from '../poker-ui';
+import { PlayingCard } from '../components/cards';
 import { navigate } from '../navigation';
 import { Brand, ErrorBox, Loading, Modal, ModeBadge } from '../components/ui';
+import { ThemeModeSelect } from '../theme';
 
 export function AdminPage() {
   const [session, setSession] = useState<AdminSession | null>(null);
@@ -30,6 +35,9 @@ export function AdminPage() {
   const [registrationInvite, setRegistrationInvite] = useState<string | null>(null);
   const [registrationInviteLoading, setRegistrationInviteLoading] = useState(false);
   const [profileOpen, setProfileOpen] = useState(false);
+  const [accountChipUser, setAccountChipUser] = useState<AdminUserSummary | null>(null);
+  const [accountLedgerUser, setAccountLedgerUser] = useState<AdminUserSummary | null>(null);
+  const [historyRoom, setHistoryRoom] = useState<AdminRoomSummary | null>(null);
 
   const loadRooms = async () => setRooms(await api<AdminRoomSummary[]>('/api/admin/rooms'));
   const loadUsers = async () => setUsers(await api<AdminUserSummary[]>('/api/admin/users'));
@@ -124,6 +132,7 @@ export function AdminPage() {
       <header className="dashboard-header page-container">
         <Brand />
         <div className="admin-header-actions">
+          <ThemeModeSelect />
           <button
             className="profile-button"
             aria-label={`编辑管理员资料 ${session.displayName ?? session.username}`}
@@ -258,6 +267,9 @@ export function AdminPage() {
                   <button onClick={() => navigate(`/room/${room.id}?view=public`)}>
                     <Icon name="eye" size={15} /> 旁观
                   </button>
+                  <button onClick={() => setHistoryRoom(room)}>
+                    <Icon name="history" size={15} /> 牌局历史
+                  </button>
                   <button
                     onClick={() => {
                       setRoomPlayers([]);
@@ -300,6 +312,8 @@ export function AdminPage() {
         ) : (
           <AccountsPanel
             users={users}
+            onAdjust={(user) => setAccountChipUser(user)}
+            onLedger={(user) => setAccountLedgerUser(user)}
             onReset={async (user) => {
               const result = await api<{ temporaryPassword: string }>(
                 `/api/admin/users/${user.id}/reset-password`,
@@ -362,6 +376,22 @@ export function AdminPage() {
           }}
         />
       )}
+      {accountChipUser && (
+        <AccountChipDialog
+          user={accountChipUser}
+          onClose={() => setAccountChipUser(null)}
+          onSaved={async () => {
+            await loadUsers();
+            setAccountChipUser(null);
+          }}
+        />
+      )}
+      {accountLedgerUser && (
+        <AccountLedgerDialog user={accountLedgerUser} onClose={() => setAccountLedgerUser(null)} />
+      )}
+      {historyRoom && (
+        <AdminHistoryDialog room={historyRoom} onClose={() => setHistoryRoom(null)} />
+      )}
     </main>
   );
 }
@@ -379,6 +409,7 @@ function AdminLogin({
   return (
     <main className="login-page">
       <section className="login-card">
+        <ThemeModeSelect />
         <Brand />
         <div className="login-heading">
           <h1>管理员登录</h1>
@@ -504,9 +535,13 @@ function AdminProfileDialog({
 
 function AccountsPanel({
   users,
+  onAdjust,
+  onLedger,
   onReset,
 }: {
   users: AdminUserSummary[];
+  onAdjust: (user: AdminUserSummary) => void;
+  onLedger: (user: AdminUserSummary) => void;
   onReset: (user: AdminUserSummary) => Promise<{ temporaryPassword: string }>;
 }) {
   const [resetting, setResetting] = useState<AdminUserSummary | null>(null);
@@ -530,9 +565,17 @@ function AccountsPanel({
           <span className={`account-state ${user.loginEnabled ? 'active' : ''}`}>
             {user.loginEnabled ? '可登录' : '已停用'}
           </span>
-          <button className="secondary-button compact-button" onClick={() => setResetting(user)}>
-            <Icon name="key" size={15} /> 重置密码
-          </button>
+          <span className="account-row-actions">
+            <button className="secondary-button compact-button" onClick={() => onAdjust(user)}>
+              调整筹码
+            </button>
+            <button className="secondary-button compact-button" onClick={() => onLedger(user)}>
+              筹码记录
+            </button>
+            <button className="secondary-button compact-button" onClick={() => setResetting(user)}>
+              <Icon name="key" size={15} /> 重置密码
+            </button>
+          </span>
         </article>
       ))}
       {users.length === 0 && <div className="empty-state">暂无玩家账号</div>}
@@ -543,6 +586,378 @@ function AccountsPanel({
           onSubmit={() => onReset(resetting)}
         />
       )}
+    </section>
+  );
+}
+
+function AccountChipDialog({
+  user,
+  onClose,
+  onSaved,
+}: {
+  user: AdminUserSummary;
+  onClose: () => void;
+  onSaved: () => Promise<void>;
+}) {
+  const [balance, setBalance] = useState(user.chipBalance ?? 0);
+  const [reason, setReason] = useState('管理员调整账户筹码');
+  const [pending, setPending] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+  const valid =
+    Number.isInteger(balance) &&
+    balance >= 0 &&
+    balance <= 1_000_000_000 &&
+    reason.trim().length > 0;
+  return (
+    <Modal title={`调整 ${user.displayName} 的账户筹码`} onClose={onClose} locked={pending}>
+      {error && <ErrorBox onClose={() => setError(null)}>{error}</ErrorBox>}
+      <form
+        className="sheet-form"
+        onSubmit={(event) => {
+          event.preventDefault();
+          if (!valid) return;
+          setPending(true);
+          void api<AdminUserSummary>(`/api/admin/users/${user.id}/chips`, {
+            method: 'PATCH',
+            body: JSON.stringify({ balance, reason: reason.trim() }),
+          })
+            .then(() => onSaved())
+            .catch((caught) =>
+              setError(caught instanceof Error ? caught.message : '账户筹码调整失败'),
+            )
+            .finally(() => setPending(false));
+        }}
+      >
+        <p className="form-hint">
+          当前余额 {formatPoints(user.chipBalance ?? 0)}
+          。调整会写入账户流水，并同步刷新该用户所在的牌桌。
+        </p>
+        <label className="field">
+          <span>调整后总筹码</span>
+          <input
+            type="number"
+            min="0"
+            max="1000000000"
+            step="1"
+            value={balance}
+            onChange={(event) => setBalance(Number(event.target.value))}
+            autoFocus
+            required
+          />
+        </label>
+        <label className="field">
+          <span>调整原因</span>
+          <input
+            value={reason}
+            onChange={(event) => setReason(event.target.value)}
+            maxLength={120}
+            required
+          />
+        </label>
+        <button className="primary-button" disabled={pending || !valid}>
+          {pending ? '正在保存…' : `保存为 ${formatPoints(balance)}`}
+        </button>
+      </form>
+    </Modal>
+  );
+}
+
+function AccountLedgerDialog({ user, onClose }: { user: AdminUserSummary; onClose: () => void }) {
+  const [entries, setEntries] = useState<AdminAccountLedgerEntry[]>([]);
+  const [status, setStatus] = useState<'loading' | 'ready' | 'error'>('loading');
+  const [error, setError] = useState<string | null>(null);
+  const load = () => {
+    setStatus('loading');
+    void api<AdminAccountLedgerEntry[]>(`/api/admin/users/${user.id}/chip-ledger`)
+      .then((result) => {
+        setEntries(result);
+        setStatus('ready');
+      })
+      .catch((caught) => {
+        setError(caught instanceof Error ? caught.message : '筹码记录加载失败');
+        setStatus('error');
+      });
+  };
+  useEffect(load, [user.id]);
+  return (
+    <Modal
+      title={`${user.displayName} · 筹码变化记录`}
+      onClose={onClose}
+      className="chip-log-modal"
+    >
+      {status === 'loading' && <Loading label="正在加载筹码记录…" />}
+      {status === 'error' && (
+        <div className="history-state history-state--error">
+          <ErrorBox>{error ?? '筹码记录加载失败'}</ErrorBox>
+          <button className="secondary-button" onClick={load}>
+            重试
+          </button>
+        </div>
+      )}
+      {status === 'ready' && (
+        <div className="chip-log-list">
+          <section>
+            <header>
+              <strong>账户流水</strong>
+              <small>{entries.length} 条</small>
+            </header>
+            {entries.length === 0 ? (
+              <p className="empty-state">暂无筹码变化记录</p>
+            ) : (
+              <ol>
+                {entries.map((entry) => (
+                  <li key={entry.id}>
+                    <span>
+                      <strong>{accountLedgerKindLabel(entry.kind)}</strong>
+                      <small>
+                        {new Date(entry.createdAt).toLocaleString('zh-CN')}
+                        {entry.roomName ? ` · ${entry.roomName}` : ''}
+                      </small>
+                    </span>
+                    <b className={entry.delta >= 0 ? 'positive' : 'negative'}>
+                      {entry.delta >= 0 ? '+' : ''}
+                      {formatPoints(entry.delta)}
+                    </b>
+                    <small>余额 {formatPoints(entry.balanceAfter)}</small>
+                  </li>
+                ))}
+              </ol>
+            )}
+          </section>
+        </div>
+      )}
+    </Modal>
+  );
+}
+
+function accountLedgerKindLabel(kind: string): string {
+  const labels: Record<string, string> = {
+    ACCOUNT_INITIAL_GRANT: '初始账户筹码',
+    ROOM_BUY_IN: '带入牌局',
+    ROOM_TOP_UP: '牌桌补充',
+    ADMIN_ACCOUNT_ADJUSTMENT: '管理员调整',
+  };
+  return labels[kind] ?? kind;
+}
+
+function AdminHistoryDialog({ room, onClose }: { room: AdminRoomSummary; onClose: () => void }) {
+  const [items, setItems] = useState<AdminHandHistoryItem[]>([]);
+  const [status, setStatus] = useState<'loading' | 'ready' | 'error'>('loading');
+  const [error, setError] = useState<string | null>(null);
+  const [expandedHandId, setExpandedHandId] = useState<string | null>(null);
+  const load = () => {
+    setStatus('loading');
+    void api<AdminHandHistoryItem[]>(`/api/admin/rooms/${room.id}/history`)
+      .then((result) => {
+        setItems(result);
+        setExpandedHandId(result[0]?.handId ?? null);
+        setStatus('ready');
+      })
+      .catch((caught) => {
+        setError(caught instanceof Error ? caught.message : '牌局历史加载失败');
+        setStatus('error');
+      });
+  };
+  useEffect(load, [room.id]);
+  return (
+    <Modal
+      title={`${room.name} · 牌局历史`}
+      onClose={onClose}
+      className="history-modal admin-history-modal"
+    >
+      {status === 'loading' && <Loading label="正在加载牌局历史…" />}
+      {status === 'error' && (
+        <div className="history-state history-state--error">
+          <ErrorBox>{error ?? '牌局历史加载失败'}</ErrorBox>
+          <button className="secondary-button" onClick={load}>
+            重试
+          </button>
+        </div>
+      )}
+      {status === 'ready' && (
+        <div className="history-list">
+          {items.map((hand) => {
+            const { names, positions } = historyPeople(hand);
+            const actions = historyActions(hand, names, positions);
+            const settlement = historySettlement(hand.result);
+            const expanded = expandedHandId === hand.handId;
+            return (
+              <article key={hand.handId} className={`history-hand ${expanded ? 'expanded' : ''}`}>
+                <button
+                  type="button"
+                  className="history-hand__summary"
+                  aria-expanded={expanded}
+                  onClick={() => setExpandedHandId(expanded ? null : hand.handId)}
+                >
+                  <span className="history-hand__number">
+                    <b>#{hand.handNumber}</b>
+                    <time dateTime={hand.startedAt}>
+                      {new Date(hand.startedAt).toLocaleString('zh-CN')}
+                    </time>
+                  </span>
+                  <span className="history-hand__outcome">
+                    <strong>
+                      {settlement ? `${formatPoints(settlement.totalPot)} 筹码底池` : '进行中'}
+                    </strong>
+                    <small>{hand.cards ? '已保存完整牌面' : '仅有公开下注记录'}</small>
+                  </span>
+                  <ModeBadge mode={hand.mode} />
+                  <Icon name="chevron" size={17} className="history-chevron" />
+                </button>
+                {expanded && (
+                  <div className="history-hand__detail">
+                    {!hand.cards && (
+                      <p className="form-hint">
+                        该牌局创建于完整牌面记录上线前，当前仅能查看公开下注和结算信息。
+                      </p>
+                    )}
+                    {hand.cards && <AdminHandCards hand={hand} names={names} />}
+                    {settlement && <AdminSettlement settlement={settlement} names={names} />}
+                    <div className="history-streets">
+                      {(['PREFLOP', 'FLOP', 'TURN', 'RIVER', 'SHOWDOWN'] as const).map((street) => {
+                        const streetActions = actions.filter((action) => action.street === street);
+                        if (!streetActions.length) return null;
+                        return (
+                          <section key={street}>
+                            <h4>{phaseLabel[street]}</h4>
+                            <ol>
+                              {streetActions.map((action, index) => (
+                                <li key={`${action.seq}-${index}`}>
+                                  <span
+                                    aria-hidden="true"
+                                    className={`history-action-dot history-action-dot--${action.action.toLowerCase()}`}
+                                  />
+                                  <span className="history-action__copy">
+                                    {naturalAction(action)}
+                                  </span>
+                                  {action.stackAfter !== undefined && (
+                                    <small>余 {formatPoints(action.stackAfter)}</small>
+                                  )}
+                                </li>
+                              ))}
+                            </ol>
+                          </section>
+                        );
+                      })}
+                    </div>
+                  </div>
+                )}
+              </article>
+            );
+          })}
+          {items.length === 0 && (
+            <div className="history-state">
+              <strong>暂无牌局记录</strong>
+            </div>
+          )}
+        </div>
+      )}
+    </Modal>
+  );
+}
+
+function historyPeople(hand: AdminHandHistoryItem) {
+  const names = new Map<string, string>();
+  const positions = new Map<string, TablePosition[]>();
+  for (const event of hand.events) {
+    const payload =
+      event.publicPayload && typeof event.publicPayload === 'object'
+        ? (event.publicPayload as Record<string, unknown>)
+        : {};
+    const participants = Array.isArray(payload.participants) ? payload.participants : [];
+    for (const value of participants) {
+      if (!value || typeof value !== 'object') continue;
+      const participant = value as Record<string, unknown>;
+      if (typeof participant.playerId !== 'string') continue;
+      if (typeof participant.nickname === 'string')
+        names.set(participant.playerId, participant.nickname);
+      if (Array.isArray(participant.positions))
+        positions.set(participant.playerId, participant.positions as TablePosition[]);
+    }
+  }
+  return { names, positions };
+}
+
+function AdminHandCards({
+  hand,
+  names,
+}: {
+  hand: AdminHandHistoryItem;
+  names: Map<string, string>;
+}) {
+  if (!hand.cards) return null;
+  return (
+    <section className="admin-history-cards" aria-label="完整牌面">
+      <header>
+        <strong>完整牌面</strong>
+        <small>管理员可见</small>
+      </header>
+      <div className="admin-history-board">
+        <span>公共牌</span>
+        <div>
+          {hand.cards.communityCards.length ? (
+            hand.cards.communityCards.map((card, index) => (
+              <PlayingCard key={`${card}-${index}`} card={card} compact still />
+            ))
+          ) : (
+            <small>无公共牌</small>
+          )}
+        </div>
+      </div>
+      <ul>
+        {hand.cards.participantIds.map((playerId) => (
+          <li key={playerId}>
+            <span>{names.get(playerId) ?? '玩家'}</span>
+            <div>
+              {(hand.cards?.holeCards[playerId] ?? []).map((card, index) => (
+                <PlayingCard key={`${card}-${index}`} card={card} compact still />
+              ))}
+            </div>
+          </li>
+        ))}
+      </ul>
+    </section>
+  );
+}
+
+function AdminSettlement({
+  settlement,
+  names,
+}: {
+  settlement: ReturnType<typeof historySettlement>;
+  names: Map<string, string>;
+}) {
+  if (!settlement) return null;
+  return (
+    <section className="history-result" aria-label="本手结算">
+      <header>
+        <span>
+          <Icon name="crown" size={18} /> 结算结果
+        </span>
+        <strong>{formatPoints(settlement.totalPot)} 筹码</strong>
+      </header>
+      <ul className="history-payouts">
+        {settlement.payouts.map((payout) => (
+          <li key={payout.playerId}>
+            <span className="mini-avatar">{(names.get(payout.playerId) ?? '玩').slice(0, 1)}</span>
+            <span>
+              <strong>{names.get(payout.playerId) ?? '玩家'}</strong>
+              <small>赢得底池</small>
+            </span>
+            <b>+{formatPoints(payout.amount)}</b>
+          </li>
+        ))}
+        {settlement.refunds.map((refund) => (
+          <li key={`refund-${refund.playerId}`} className="refund">
+            <span className="mini-avatar">{(names.get(refund.playerId) ?? '玩').slice(0, 1)}</span>
+            <span>
+              <strong>{names.get(refund.playerId) ?? '玩家'}</strong>
+              <small>退回</small>
+            </span>
+            <b>+{formatPoints(refund.amount)}</b>
+          </li>
+        ))}
+      </ul>
     </section>
   );
 }

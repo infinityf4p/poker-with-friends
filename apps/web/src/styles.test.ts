@@ -50,9 +50,10 @@ describe('interaction accessibility safeguards', () => {
 });
 
 describe('theme and notice presentation', () => {
-  it('follows the browser color scheme and keeps notices in layout flow', () => {
+  it('supports explicit theme modes and keeps notices in layout flow', () => {
     expect(css).toMatch(/color-scheme:\s*light dark/);
-    expect(css).toMatch(/@media\s*\(prefers-color-scheme:\s*dark\)/);
+    expect(css).toMatch(/:root\[data-theme='dark'\]\s*\{/);
+    expect(css).toMatch(/html\[data-theme='dark'\] \.table-page/);
     expect(css).toMatch(/\.table-notice-wrap\s*\{[\s\S]*?position:\s*relative/);
   });
 });

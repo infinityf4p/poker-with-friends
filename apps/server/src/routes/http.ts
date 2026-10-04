@@ -2,6 +2,7 @@ import { randomUUID } from 'node:crypto';
 import type { FastifyInstance, FastifyReply, FastifyRequest } from 'fastify';
 import {
   addRoomMemberSchema,
+  adminAdjustAccountChipsSchema,
   adminAdjustStackSchema,
   adminKickPlayerSchema,
   adminLoginSchema,
@@ -348,6 +349,39 @@ export async function registerHttpRoutes(
     },
   );
 
+  app.patch<{ Params: { id: string } }>('/api/admin/users/:id/chips', async (request, reply) => {
+    const admin = await requireAdmin(request, reply, repository);
+    if (!admin) return;
+    const parsed = adminAdjustAccountChipsSchema.safeParse(request.body ?? {});
+    if (!parsed.success) return sendValidationError(reply, parsed.error.issues);
+    const result = await repository.adjustUserChips(
+      admin.id,
+      request.params.id,
+      parsed.data.balance,
+      parsed.data.reason,
+      parsed.data.operationId ?? randomUUID(),
+    );
+    if (!result) return reply.code(404).send({ error: 'NOT_FOUND', message: '账号不存在' });
+    await Promise.all(result.roomIds.map((roomId) => rooms.refreshPlayers(roomId)));
+    const { roomIds: _roomIds, ...user } = result;
+    return user;
+  });
+
+  app.get<{ Params: { id: string } }>(
+    '/api/admin/users/:id/chip-ledger',
+    async (request, reply) => {
+      if (!(await requireAdmin(request, reply, repository))) return;
+      const entries = await repository.getAdminAccountChipLedger(request.params.id);
+      if (entries.length === 0) {
+        const users = await repository.listUserAccounts();
+        if (!users.some((user) => user.id === request.params.id)) {
+          return reply.code(404).send({ error: 'NOT_FOUND', message: '账号不存在' });
+        }
+      }
+      return entries;
+    },
+  );
+
   app.get('/api/admin/rooms', async (request, reply) => {
     if (!(await requireAdmin(request, reply, repository))) return;
     return repository.listRooms(config.PUBLIC_ORIGIN);
@@ -372,6 +406,11 @@ export async function registerHttpRoutes(
       );
       return reply.code(503).send({ error: 'ROOM_FROZEN', message: '牌局当前无法恢复' });
     }
+  });
+
+  app.get<{ Params: { id: string } }>('/api/admin/rooms/:id/history', async (request, reply) => {
+    if (!(await requireAdmin(request, reply, repository))) return;
+    return repository.adminHistory(request.params.id);
   });
 
   app.post<{ Params: { id: string; playerId: string } }>(

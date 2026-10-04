@@ -25,6 +25,8 @@ import {
 import type {
   AdminRoomSummary,
   AdminRoomPlayerSummary,
+  AdminAccountLedgerEntry,
+  AdminHandHistoryItem,
   AdminUserSummary,
   CommandResult,
   HandHistoryItem,
@@ -99,6 +101,7 @@ export interface HandStartMutation {
   phase: 'POST_BLINDS' | 'PREFLOP' | 'FLOP' | 'TURN' | 'RIVER' | 'SHOWDOWN' | 'SETTLED';
   buttonSeat: number;
   initialTotalChips: number;
+  adminHistory?: unknown;
 }
 
 export interface HandUpdateMutation {
@@ -106,6 +109,7 @@ export interface HandUpdateMutation {
   phase: 'POST_BLINDS' | 'PREFLOP' | 'FLOP' | 'TURN' | 'RIVER' | 'SHOWDOWN' | 'SETTLED';
   result?: unknown;
   ended?: boolean;
+  adminHistory?: unknown;
 }
 
 export interface RoomCommit {
@@ -684,6 +688,68 @@ export class PokerRepository {
       linkedAdminId: row.linkedAdminId,
       createdAt: row.createdAt.toISOString(),
     }));
+  }
+
+  public async adjustUserChips(
+    adminId: string,
+    userId: string,
+    balance: number,
+    reason: string,
+    operationId: string,
+  ): Promise<(AdminUserSummary & { roomIds: string[] }) | null> {
+    return this.db.transaction(async (tx) => {
+      const [account] = await tx
+        .select()
+        .from(userAccounts)
+        .where(eq(userAccounts.id, userId))
+        .for('update')
+        .limit(1);
+      if (!account) return null;
+      const delta = balance - account.chipBalance;
+      const [updated] = await tx
+        .update(userAccounts)
+        .set({ chipBalance: balance, updatedAt: new Date() })
+        .where(eq(userAccounts.id, userId))
+        .returning();
+      if (!updated) return null;
+      if (delta !== 0) {
+        await tx.insert(accountLedgerEntries).values({
+          userId,
+          roomId: null,
+          playerId: null,
+          kind: 'ADMIN_ACCOUNT_ADJUSTMENT',
+          delta,
+          balanceAfter: balance,
+          metadata: { reason, operationId, beforeBalance: account.chipBalance },
+        });
+      }
+      await tx.insert(auditLogs).values({
+        adminId,
+        action: 'USER_ACCOUNT_CHIPS_ADJUSTED',
+        metadata: {
+          userId,
+          beforeBalance: account.chipBalance,
+          balance,
+          delta,
+          reason,
+          operationId,
+        },
+      });
+      const roomIds = (
+        await tx
+          .select({ roomId: players.roomId })
+          .from(players)
+          .innerJoin(rooms, eq(players.roomId, rooms.id))
+          .where(and(eq(players.userId, userId), ne(rooms.status, 'ARCHIVED')))
+      ).map((row) => row.roomId);
+      return {
+        ...userSession(updated),
+        loginEnabled: updated.loginEnabled,
+        linkedAdminId: updated.linkedAdminId,
+        createdAt: updated.createdAt.toISOString(),
+        roomIds,
+      };
+    });
   }
 
   public async ensureAdminPlayerAccount(admin: AuthenticatedAdmin): Promise<AuthenticatedUser> {
@@ -1499,6 +1565,37 @@ export class PokerRepository {
     };
   }
 
+  public async getAdminAccountChipLedger(userId: string): Promise<AdminAccountLedgerEntry[]> {
+    const rows = await this.db
+      .select({
+        id: accountLedgerEntries.id,
+        userId: accountLedgerEntries.userId,
+        username: userAccounts.username,
+        displayName: userAccounts.displayName,
+        playerId: accountLedgerEntries.playerId,
+        nickname: players.nickname,
+        kind: accountLedgerEntries.kind,
+        delta: accountLedgerEntries.delta,
+        balanceAfter: accountLedgerEntries.balanceAfter,
+        handId: sql<string | null>`null`,
+        metadata: accountLedgerEntries.metadata,
+        roomId: accountLedgerEntries.roomId,
+        roomName: rooms.name,
+        createdAt: accountLedgerEntries.createdAt,
+      })
+      .from(accountLedgerEntries)
+      .innerJoin(userAccounts, eq(accountLedgerEntries.userId, userAccounts.id))
+      .leftJoin(players, eq(accountLedgerEntries.playerId, players.id))
+      .leftJoin(rooms, eq(accountLedgerEntries.roomId, rooms.id))
+      .where(eq(accountLedgerEntries.userId, userId))
+      .orderBy(desc(accountLedgerEntries.createdAt));
+    return rows.map((row) => ({
+      ...row,
+      metadata: row.metadata as Record<string, unknown>,
+      createdAt: row.createdAt.toISOString(),
+    }));
+  }
+
   public async getCommandResult(
     roomId: string,
     commandId: string,
@@ -1537,6 +1634,9 @@ export class PokerRepository {
           phase: commit.handStart.phase,
           buttonSeat: commit.handStart.buttonSeat,
           initialTotalChips: commit.handStart.initialTotalChips,
+          adminHistory: commit.handStart.adminHistory
+            ? encryptSnapshot(commit.handStart.adminHistory, this.config.SNAPSHOT_KEY)
+            : null,
         });
       }
       if (commit.handUpdate) {
@@ -1545,6 +1645,14 @@ export class PokerRepository {
           .set({
             phase: commit.handUpdate.phase,
             result: commit.handUpdate.result ?? null,
+            ...(commit.handUpdate.adminHistory
+              ? {
+                  adminHistory: encryptSnapshot(
+                    commit.handUpdate.adminHistory,
+                    this.config.SNAPSHOT_KEY,
+                  ),
+                }
+              : {}),
             endedAt: commit.handUpdate.ended ? new Date() : null,
             updatedAt: new Date(),
           })
@@ -1742,6 +1850,57 @@ export class PokerRepository {
           publicPayload: event.publicPayload,
         })),
     }));
+  }
+
+  public async adminHistory(roomId: string): Promise<AdminHandHistoryItem[]> {
+    const handRows = await this.db
+      .select()
+      .from(hands)
+      .where(eq(hands.roomId, roomId))
+      .orderBy(desc(hands.handNumber))
+      .limit(100);
+    if (handRows.length === 0) return [];
+    const eventRows = await this.db
+      .select()
+      .from(roomEvents)
+      .where(
+        inArray(
+          roomEvents.handId,
+          handRows.map((hand) => hand.id),
+        ),
+      )
+      .orderBy(asc(roomEvents.seq));
+    return handRows.map((hand) => {
+      let cards: AdminHandHistoryItem['cards'] = null;
+      if (hand.adminHistory) {
+        try {
+          const decoded = decryptSnapshot<AdminHandHistoryItem['cards']>(
+            hand.adminHistory as EncryptedPayload,
+            this.config.SNAPSHOT_KEY,
+          );
+          if (decoded && typeof decoded === 'object') cards = decoded;
+        } catch {
+          cards = null;
+        }
+      }
+      return {
+        handId: hand.id,
+        handNumber: hand.handNumber,
+        startedAt: hand.startedAt.toISOString(),
+        endedAt: hand.endedAt?.toISOString() ?? null,
+        mode: hand.mode,
+        result: hand.result,
+        cards,
+        events: eventRows
+          .filter((event) => event.handId === hand.id)
+          .map((event) => ({
+            seq: event.seq,
+            type: event.type,
+            createdAt: event.createdAt.toISOString(),
+            publicPayload: event.publicPayload,
+          })),
+      };
+    });
   }
 
   public async archiveRoom(

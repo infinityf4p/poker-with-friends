@@ -4,6 +4,8 @@ import { join } from 'node:path';
 import { admins, auditLogs, createDatabase, rooms, userAccounts } from '@poker-with-friends/db';
 import type {
   AdminUserSummary,
+  AdminAccountLedgerEntry,
+  AdminHandHistoryItem,
   CommandResult,
   HandHistoryItem,
   LobbyRoomSummary,
@@ -482,6 +484,35 @@ describeWithDatabase('real HTTP + Socket.IO three-player table flow', () => {
     expect(new Set(actions.map((action) => action.action))).toEqual(
       new Set<PlayerAction>(['RAISE_TO', 'CALL', 'CHECK', 'BET_TO', 'FOLD', 'ALL_IN']),
     );
+
+    const adminHistories = await request<AdminHandHistoryItem[]>(
+      admin,
+      'GET',
+      `/api/admin/rooms/${room.roomId}/history`,
+    );
+    const adminFirstHand = adminHistories.find((hand) => hand.handNumber === firstHandNumber);
+    expect(adminFirstHand?.cards?.participantIds).toHaveLength(3);
+    expect(
+      Object.values(adminFirstHand?.cards?.holeCards ?? {}).every((cards) => cards.length === 2),
+    ).toBe(true);
+
+    const adminUsers = await request<AdminUserSummary[]>(admin, 'GET', '/api/admin/users');
+    const firstAccount = adminUsers.find((user) => user.id === players[0]!.accountId);
+    expect(firstAccount).toBeDefined();
+    const adjustedBalance = (firstAccount?.chipBalance ?? 0) + 123;
+    const adjusted = await request<AdminUserSummary>(
+      admin,
+      'PATCH',
+      `/api/admin/users/${players[0]!.accountId}/chips`,
+      { balance: adjustedBalance, reason: 'E2E account audit', operationId: randomUUID() },
+    );
+    expect(adjusted.chipBalance).toBe(adjustedBalance);
+    const accountLedger = await request<AdminAccountLedgerEntry[]>(
+      admin,
+      'GET',
+      `/api/admin/users/${players[0]!.accountId}/chip-ledger`,
+    );
+    expect(accountLedger.some((entry) => entry.kind === 'ADMIN_ACCOUNT_ADJUSTMENT')).toBe(true);
 
     const positive = currentRoom().seats.filter((seat) => seat.playerId && seat.stack > 0);
     if (positive.length === 3) {

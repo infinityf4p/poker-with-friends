@@ -238,6 +238,14 @@ export interface ChipLedgerResponse {
   account: ChipLedgerEntry[];
 }
 
+export interface AdminAccountLedgerEntry extends ChipLedgerEntry {
+  userId: string;
+  username: string;
+  displayName: string;
+  roomId: string | null;
+  roomName: string | null;
+}
+
 export interface AdminRoomPlayerSummary {
   playerId: string;
   userId: string;
@@ -274,6 +282,14 @@ export interface HandHistoryItem {
     createdAt: string;
     publicPayload: unknown;
   }>;
+}
+
+export interface AdminHandHistoryItem extends HandHistoryItem {
+  cards: {
+    participantIds: string[];
+    holeCards: Record<string, Card[]>;
+    communityCards: Card[];
+  } | null;
 }
 
 export const DEFAULT_ROOM_SETTINGS: Omit<RoomSettings, 'mode'> = {

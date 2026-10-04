@@ -1,4 +1,5 @@
 import {
+  adminAdjustAccountChipsSchema,
   adminAdjustStackSchema,
   adminKickPlayerSchema,
   adminRestorePlayerSchema,
@@ -122,6 +123,16 @@ describe('permanent user auth contract', () => {
     expect(adminAdjustStackSchema.safeParse({ stack: -1, reason: 'bad' }).success).toBe(false);
     expect(adminKickPlayerSchema.parse({})).toEqual({ reason: '管理员移出' });
     expect(adminRestorePlayerSchema.parse({})).toEqual({});
+  });
+
+  it('validates audited account balance adjustments', () => {
+    expect(adminAdjustAccountChipsSchema.parse({ balance: 75_000, reason: '活动奖励' })).toEqual({
+      balance: 75_000,
+      reason: '活动奖励',
+    });
+    expect(adminAdjustAccountChipsSchema.safeParse({ balance: -1, reason: 'bad' }).success).toBe(
+      false,
+    );
   });
 
   it('rejects malformed database identifiers and invite tokens before querying PostgreSQL', () => {

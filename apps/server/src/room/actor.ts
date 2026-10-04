@@ -423,7 +423,17 @@ function finishSettledHand(
     eventType: 'HAND_SETTLED',
     publicPayload: { handNumber: hand.number, result, kickedPlayerIds },
     ledgerMutations,
-    handUpdate: { id: hand.id, phase: 'SETTLED', result, ended: true },
+    handUpdate: {
+      id: hand.id,
+      phase: 'SETTLED',
+      result,
+      ended: true,
+      adminHistory: {
+        participantIds: [...hand.participantIds],
+        holeCards: hand.holeCards,
+        communityCards: [...hand.communityCards],
+      },
+    },
   };
 }
 
@@ -683,6 +693,11 @@ function beginHand(state: RuntimeRoomState): MutationExtras {
       phase: 'PREFLOP',
       buttonSeat: hand.buttonSeat,
       initialTotalChips: hand.initialTotalChips,
+      adminHistory: {
+        participantIds: [...hand.participantIds],
+        holeCards: hand.holeCards,
+        communityCards: [],
+      },
     },
   };
   if (betting.complete) extras = advanceCompletedRound(state, extras);
@@ -864,6 +879,20 @@ export class RoomActor {
     this.state.updatedAt = nowIso();
     const projections = buildProjections(this.state);
     if (command) command.result = successfulResult(this.state, command.playerId);
+    const handUpdate = extras.handUpdate
+      ? {
+          ...extras.handUpdate,
+          ...(this.state.hand
+            ? {
+                adminHistory: {
+                  participantIds: [...this.state.hand.participantIds],
+                  holeCards: this.state.hand.holeCards,
+                  communityCards: [...this.state.hand.communityCards],
+                },
+              }
+            : {}),
+        }
+      : undefined;
     await this.repository.commitRoom({
       roomId: this.state.roomId,
       seq: this.state.serverSeq,
@@ -885,7 +914,7 @@ export class RoomActor {
         ? { accountLedgerMutations: extras.accountLedgerMutations }
         : {}),
       ...(extras.handStart ? { handStart: extras.handStart } : {}),
-      ...(extras.handUpdate ? { handUpdate: extras.handUpdate } : {}),
+      ...(handUpdate ? { handUpdate } : {}),
       ...(command ? { command } : {}),
       ...(extras.liveProposal ? { liveProposal: extras.liveProposal } : {}),
       ...(extras.liveConfirmation ? { liveConfirmation: extras.liveConfirmation } : {}),

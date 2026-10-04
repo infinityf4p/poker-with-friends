@@ -4,6 +4,7 @@ import { Icon } from '../icons';
 import { navigate } from '../navigation';
 import { Brand, ErrorBox, IconButton, Loading, ModeBadge } from '../components/ui';
 import { formatPoints } from '../poker-ui';
+import { ThemeModeSelect } from '../theme';
 
 export function JoinPage({ token }: { token: string }) {
   const [preview, setPreview] = useState<InvitePreview | null>(null);
@@ -51,7 +52,10 @@ export function JoinPage({ token }: { token: string }) {
     <main className="invite-page real-invite">
       <header className="invite-header page-container">
         <Brand />
-        <IconButton icon="arrow-left" label="返回大厅" onClick={() => navigate('/')} />
+        <span className="invite-header-actions">
+          <ThemeModeSelect />
+          <IconButton icon="arrow-left" label="返回大厅" onClick={() => navigate('/')} />
+        </span>
       </header>
       <section className="invite-card">
         <div className={`invite-emblem invite-emblem--${preview.mode.toLowerCase()}`}>

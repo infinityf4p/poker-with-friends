@@ -144,6 +144,12 @@ export const adminAdjustStackSchema = z.object({
   operationId: identifierSchema.optional(),
 });
 
+export const adminAdjustAccountChipsSchema = z.object({
+  balance: integerAmount,
+  reason: z.string().trim().min(1).max(120),
+  operationId: identifierSchema.optional(),
+});
+
 export const adminKickPlayerSchema = z.object({
   reason: z.string().trim().min(1).max(120).default('管理员移出'),
   operationId: identifierSchema.optional(),
@@ -206,6 +212,7 @@ export type CreateUserAccountInput = z.infer<typeof createUserAccountSchema>;
 export type ResetUserPasswordInput = z.infer<typeof resetUserPasswordSchema>;
 export type AddRoomMemberInput = z.infer<typeof addRoomMemberSchema>;
 export type AdminAdjustStackInput = z.infer<typeof adminAdjustStackSchema>;
+export type AdminAdjustAccountChipsInput = z.infer<typeof adminAdjustAccountChipsSchema>;
 export type AdminKickPlayerInput = z.infer<typeof adminKickPlayerSchema>;
 export type AdminRestorePlayerInput = z.infer<typeof adminRestorePlayerSchema>;
 export type CreateRoomInput = z.infer<typeof createRoomSchema>;

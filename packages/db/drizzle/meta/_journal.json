@@ -50,6 +50,13 @@
       "when": 1784041000000,
       "tag": "0006_admin_profile_global_nickname",
       "breakpoints": true
+    },
+    {
+      "idx": 7,
+      "version": "7",
+      "when": 1784042000000,
+      "tag": "0007_admin_hand_history",
+      "breakpoints": true
     }
   ]
 }

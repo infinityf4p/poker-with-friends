@@ -1,6 +1,8 @@
 import type {
   AdminRoomPlayerSummary,
   AdminRoomSummary,
+  AdminAccountLedgerEntry,
+  AdminHandHistoryItem,
   AdminUserSummary,
   ChipLedgerResponse,
   LobbyRoomSummary,
@@ -89,6 +91,8 @@ export interface PlayerSession {
 }
 
 export type {
+  AdminAccountLedgerEntry,
+  AdminHandHistoryItem,
   AdminRoomPlayerSummary,
   AdminRoomSummary,
   AdminUserSummary,

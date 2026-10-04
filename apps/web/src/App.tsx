@@ -4,6 +4,7 @@ import { LobbyPage } from './pages/LobbyPage';
 import { AdminPage } from './pages/AdminPage';
 import { JoinPage } from './pages/JoinPage';
 import { RoomPage } from './pages/RoomPage';
+import { ThemeProvider } from './theme';
 
 function App() {
   const [route, setRoute] = useState<Route>(currentRoute);
@@ -24,10 +25,17 @@ function App() {
     document.title = `${pageTitle} · Poker with Friends`;
   }, [route]);
 
-  if (route.kind === 'admin') return <AdminPage />;
-  if (route.kind === 'join') return <JoinPage token={route.token} />;
-  if (route.kind === 'room') return <RoomPage key={route.roomId} roomId={route.roomId} />;
-  return <LobbyPage />;
+  const page =
+    route.kind === 'admin' ? (
+      <AdminPage />
+    ) : route.kind === 'join' ? (
+      <JoinPage token={route.token} />
+    ) : route.kind === 'room' ? (
+      <RoomPage key={route.roomId} roomId={route.roomId} />
+    ) : (
+      <LobbyPage />
+    );
+  return <ThemeProvider>{page}</ThemeProvider>;
 }
 
 export default App;

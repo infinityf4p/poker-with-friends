@@ -196,6 +196,7 @@ export const hands = pgTable(
     buttonSeat: integer('button_seat').notNull(),
     initialTotalChips: bigint('initial_total_chips', { mode: 'number' }).notNull(),
     result: jsonb('result'),
+    adminHistory: jsonb('admin_history'),
     startedAt: timestamp('started_at', { withTimezone: true }).notNull().defaultNow(),
     endedAt: timestamp('ended_at', { withTimezone: true }),
     createdAt: createdAtColumn(),
