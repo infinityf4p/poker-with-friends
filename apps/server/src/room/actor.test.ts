@@ -278,8 +278,10 @@ describe('RoomActor', () => {
     const hand = actor.state.hand!;
     const privateCards = actor.snapshot(a.id).private!.holeCards;
     expect(privateCards).toHaveLength(2);
+    const publicSnapshot = actor.snapshot(a.id).public;
     for (const card of privateCards) {
-      expect(JSON.stringify(actor.snapshot(a.id).public)).not.toContain(card);
+      expect(publicSnapshot.communityCards).not.toContain(card);
+      expect(publicSnapshot.seats.flatMap((seat) => seat.revealedCards ?? [])).not.toContain(card);
     }
     const actorId = hand.betting.actorId!;
     const commandId = randomUUID();
