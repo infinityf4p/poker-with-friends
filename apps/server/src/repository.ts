@@ -3,6 +3,7 @@ import argon2 from 'argon2';
 import {
   adminSessions,
   admins,
+  accountLedgerEntries,
   auditLogs,
   commandResults,
   hands,
@@ -13,6 +14,7 @@ import {
   privateSnapshots,
   roomEvents,
   roomInvites,
+  registrationInvites,
   rooms,
   userAccounts,
   userSessions,
@@ -32,6 +34,7 @@ import type {
   RoomStatus,
   UserRoomSummary,
   UserSession,
+  ChipLedgerResponse,
 } from '@poker-with-friends/protocol';
 import { and, asc, desc, eq, gt, inArray, isNull, lt, ne, sql } from 'drizzle-orm';
 import type { AppConfig } from './config.js';
@@ -47,6 +50,7 @@ import { SESSION_TTL_MS } from './security/cookies.js';
 export interface AuthenticatedAdmin {
   id: string;
   username: string;
+  displayName: string;
 }
 
 export interface AuthenticatedPlayer {
@@ -64,6 +68,7 @@ export interface LoadedRoom {
   room: RoomRow;
   players: PlayerRow[];
   privateState: unknown | null;
+  accountChipsByUserId: Record<string, number>;
 }
 
 export interface PlayerMutation {
@@ -118,6 +123,7 @@ export interface RoomCommit {
   };
   playerMutations: PlayerMutation[];
   ledgerMutations?: LedgerMutation[];
+  accountLedgerMutations?: AccountLedgerMutation[];
   handStart?: HandStartMutation;
   handUpdate?: HandUpdateMutation;
   command?: {
@@ -151,6 +157,16 @@ export interface RoomCommit {
   };
 }
 
+export interface AccountLedgerMutation {
+  userId: string;
+  playerId?: string;
+  kind: string;
+  delta: number;
+  beforeBalance: number;
+  balanceAfter: number;
+  metadata?: Record<string, unknown>;
+}
+
 function expiresAt(): Date {
   return new Date(Date.now() + SESSION_TTL_MS);
 }
@@ -174,12 +190,14 @@ function userSession(row: {
   username: string;
   displayName: string;
   mustChangePassword: boolean;
+  chipBalance: number;
 }): UserSession {
   return {
     id: row.id,
     username: row.username,
     displayName: row.displayName,
     mustChangePassword: row.mustChangePassword,
+    chipBalance: row.chipBalance,
   };
 }
 
@@ -193,7 +211,11 @@ export class PokerRepository {
     if (!this.config.ADMIN_PASSWORD_HASH) return;
     await this.db.transaction(async (tx) => {
       let [existing] = await tx
-        .select({ id: admins.id, passwordHash: admins.passwordHash })
+        .select({
+          id: admins.id,
+          passwordHash: admins.passwordHash,
+          displayName: admins.displayName,
+        })
         .from(admins)
         .where(eq(admins.username, this.config.ADMIN_USERNAME))
         .limit(1);
@@ -202,21 +224,25 @@ export class PokerRepository {
           .insert(admins)
           .values({
             username: this.config.ADMIN_USERNAME,
+            displayName: this.config.ADMIN_USERNAME,
             passwordHash: this.config.ADMIN_PASSWORD_HASH!,
           })
           .onConflictDoNothing({ target: admins.username });
         [existing] = await tx
-          .select({ id: admins.id, passwordHash: admins.passwordHash })
+          .select({
+            id: admins.id,
+            passwordHash: admins.passwordHash,
+            displayName: admins.displayName,
+          })
           .from(admins)
           .where(eq(admins.username, this.config.ADMIN_USERNAME))
           .limit(1);
       }
-      if (existing && existing.passwordHash !== this.config.ADMIN_PASSWORD_HASH) {
+      if (existing && !existing.displayName.trim()) {
         await tx
           .update(admins)
-          .set({ passwordHash: this.config.ADMIN_PASSWORD_HASH!, updatedAt: new Date() })
+          .set({ displayName: this.config.ADMIN_USERNAME, updatedAt: new Date() })
           .where(eq(admins.id, existing.id));
-        await tx.delete(adminSessions).where(eq(adminSessions.adminId, existing.id));
       }
     });
   }
@@ -228,7 +254,7 @@ export class PokerRepository {
       .where(eq(admins.username, username))
       .limit(1);
     if (!admin || !(await argon2.verify(admin.passwordHash, password))) return null;
-    return { id: admin.id, username: admin.username };
+    return { id: admin.id, username: admin.username, displayName: admin.displayName };
   }
 
   public async createAdminSession(adminId: string): Promise<string> {
@@ -245,7 +271,7 @@ export class PokerRepository {
     if (!token) return null;
     const tokenHash = hashOpaqueToken(token, this.config.TOKEN_PEPPER);
     const [row] = await this.db
-      .select({ id: admins.id, username: admins.username })
+      .select({ id: admins.id, username: admins.username, displayName: admins.displayName })
       .from(adminSessions)
       .innerJoin(admins, eq(adminSessions.adminId, admins.id))
       .where(and(eq(adminSessions.tokenHash, tokenHash), gt(adminSessions.expiresAt, new Date())))
@@ -274,6 +300,88 @@ export class PokerRepository {
     return userSession(account);
   }
 
+  public async createRegistrationInvite(creator: {
+    adminId?: string;
+    userId?: string;
+  }): Promise<{ code: string; expiresAt: string }> {
+    if (!creator.adminId && !creator.userId) throw new Error('INVITE_CREATOR_REQUIRED');
+    const code = randomToken();
+    const expires = new Date(Date.now() + 7 * 24 * 60 * 60 * 1000);
+    await this.db.insert(registrationInvites).values({
+      tokenHash: hashOpaqueToken(code, this.config.TOKEN_PEPPER),
+      createdByAdminId: creator.adminId ?? null,
+      createdByUserId: creator.userId ?? null,
+      expiresAt: expires,
+    });
+    return { code, expiresAt: expires.toISOString() };
+  }
+
+  public async registerUser(
+    inviteCode: string,
+    usernameInput: string,
+    password: string,
+  ): Promise<{ user: AuthenticatedUser; sessionToken: string }> {
+    const username = normalizeUsername(usernameInput);
+    const passwordHash = await argon2.hash(password, USER_PASSWORD_OPTIONS);
+    const tokenHash = hashOpaqueToken(inviteCode, this.config.TOKEN_PEPPER);
+    const sessionToken = randomToken();
+    try {
+      const account = await this.db.transaction(async (tx) => {
+        const [invite] = await tx
+          .select()
+          .from(registrationInvites)
+          .where(
+            and(
+              eq(registrationInvites.tokenHash, tokenHash),
+              isNull(registrationInvites.usedAt),
+              sql`(${registrationInvites.expiresAt} is null or ${registrationInvites.expiresAt} > now())`,
+            ),
+          )
+          .for('update')
+          .limit(1);
+        if (!invite) throw new Error('REGISTRATION_INVITE_INVALID');
+        const [created] = await tx
+          .insert(userAccounts)
+          .values({
+            username,
+            displayName: usernameInput.trim().slice(0, 20),
+            passwordHash,
+            chipBalance: 50_000,
+          })
+          .returning();
+        if (!created) throw new Error('USERNAME_TAKEN');
+        await tx.insert(accountLedgerEntries).values({
+          userId: created.id,
+          kind: 'ACCOUNT_INITIAL_GRANT',
+          delta: created.chipBalance,
+          balanceAfter: created.chipBalance,
+          metadata: { source: 'REGISTRATION' },
+        });
+        await tx
+          .update(registrationInvites)
+          .set({ usedAt: new Date(), usedByUserId: created.id })
+          .where(eq(registrationInvites.id, invite.id));
+        await tx.insert(userSessions).values({
+          userId: created.id,
+          tokenHash: hashOpaqueToken(sessionToken, this.config.TOKEN_PEPPER),
+          expiresAt: expiresAt(),
+        });
+        return created;
+      });
+      return { user: userSession(account), sessionToken };
+    } catch (error) {
+      if (
+        typeof error === 'object' &&
+        error !== null &&
+        'code' in error &&
+        error.code === '23505'
+      ) {
+        throw new Error('USERNAME_TAKEN');
+      }
+      throw error;
+    }
+  }
+
   public async createUserSession(userId: string): Promise<string> {
     const token = randomToken();
     await this.db.insert(userSessions).values({
@@ -293,6 +401,7 @@ export class PokerRepository {
         username: userAccounts.username,
         displayName: userAccounts.displayName,
         mustChangePassword: userAccounts.mustChangePassword,
+        chipBalance: userAccounts.chipBalance,
       })
       .from(userSessions)
       .innerJoin(userAccounts, eq(userSessions.userId, userAccounts.id))
@@ -324,31 +433,178 @@ export class PokerRepository {
     currentPassword: string,
     newPassword: string,
   ): Promise<{ user: AuthenticatedUser; sessionToken: string } | null> {
+    const changed = await this.updateUserProfile(userId, {
+      currentPassword,
+      newPassword,
+    });
+    return changed?.sessionToken
+      ? { user: changed.user, sessionToken: changed.sessionToken }
+      : null;
+  }
+
+  public async updateUserProfile(
+    userId: string,
+    input: {
+      displayName?: string | undefined;
+      currentPassword?: string | undefined;
+      newPassword?: string | undefined;
+    },
+  ): Promise<{ user: AuthenticatedUser; sessionToken?: string; roomIds: string[] } | null> {
     const [account] = await this.db
       .select()
       .from(userAccounts)
       .where(eq(userAccounts.id, userId))
       .limit(1);
-    if (!account?.passwordHash || !(await argon2.verify(account.passwordHash, currentPassword))) {
-      return null;
+    if (!account) return null;
+    if (input.newPassword) {
+      if (!account.passwordHash || !input.currentPassword) return null;
+      if (!(await argon2.verify(account.passwordHash, input.currentPassword))) return null;
     }
-    const passwordHash = await argon2.hash(newPassword, USER_PASSWORD_OPTIONS);
-    const sessionToken = randomToken();
-    const [updated] = await this.db.transaction(async (tx) => {
-      const rows = await tx
+    const displayName = input.displayName?.trim();
+    if (
+      displayName !== undefined &&
+      (displayName.length === 0 ||
+        displayName.length > 20 ||
+        /[\u0000-\u001f\u007f-\u009f]/u.test(displayName))
+    ) {
+      throw new Error('INVALID_DISPLAY_NAME');
+    }
+    const passwordHash = input.newPassword
+      ? await argon2.hash(input.newPassword, USER_PASSWORD_OPTIONS)
+      : undefined;
+    const sessionToken = input.newPassword ? randomToken() : undefined;
+    const result = await this.db.transaction(async (tx) => {
+      const [locked] = await tx
+        .select()
+        .from(userAccounts)
+        .where(eq(userAccounts.id, userId))
+        .for('update')
+        .limit(1);
+      if (!locked) return null;
+      const [updated] = await tx
         .update(userAccounts)
-        .set({ passwordHash, mustChangePassword: false, updatedAt: new Date() })
+        .set({
+          ...(displayName === undefined ? {} : { displayName }),
+          ...(passwordHash ? { passwordHash, mustChangePassword: false } : {}),
+          updatedAt: new Date(),
+        })
         .where(eq(userAccounts.id, userId))
         .returning();
-      await tx.delete(userSessions).where(eq(userSessions.userId, userId));
-      await tx.insert(userSessions).values({
-        userId,
-        tokenHash: hashOpaqueToken(sessionToken, this.config.TOKEN_PEPPER),
-        expiresAt: expiresAt(),
-      });
-      return rows;
+      if (!updated) return null;
+      const roomIds =
+        displayName === undefined
+          ? []
+          : (
+              await tx
+                .select({ roomId: players.roomId })
+                .from(players)
+                .innerJoin(rooms, eq(players.roomId, rooms.id))
+                .where(and(eq(players.userId, userId), ne(rooms.status, 'ARCHIVED')))
+            ).map((row) => row.roomId);
+      if (displayName !== undefined) {
+        await tx
+          .update(players)
+          .set({ nickname: displayName, updatedAt: new Date() })
+          .where(eq(players.userId, userId));
+      }
+      if (sessionToken) {
+        await tx.delete(userSessions).where(eq(userSessions.userId, userId));
+        await tx.insert(userSessions).values({
+          userId,
+          tokenHash: hashOpaqueToken(sessionToken, this.config.TOKEN_PEPPER),
+          expiresAt: expiresAt(),
+        });
+      }
+      return {
+        user: userSession(updated),
+        ...(sessionToken ? { sessionToken } : {}),
+        roomIds,
+      };
     });
-    return updated ? { user: userSession(updated), sessionToken } : null;
+    return result;
+  }
+
+  public async updateAdminProfile(
+    adminId: string,
+    input: {
+      displayName?: string | undefined;
+      currentPassword?: string | undefined;
+      newPassword?: string | undefined;
+    },
+  ): Promise<{ admin: AuthenticatedAdmin; sessionToken?: string; roomIds: string[] } | null> {
+    const [admin] = await this.db.select().from(admins).where(eq(admins.id, adminId)).limit(1);
+    if (!admin) return null;
+    if (input.newPassword) {
+      if (
+        !input.currentPassword ||
+        !(await argon2.verify(admin.passwordHash, input.currentPassword))
+      ) {
+        return null;
+      }
+    }
+    const displayName = input.displayName?.trim();
+    if (
+      displayName !== undefined &&
+      (displayName.length === 0 ||
+        displayName.length > 20 ||
+        /[\u0000-\u001f\u007f-\u009f]/u.test(displayName))
+    ) {
+      throw new Error('INVALID_DISPLAY_NAME');
+    }
+    const passwordHash = input.newPassword
+      ? await argon2.hash(input.newPassword, USER_PASSWORD_OPTIONS)
+      : undefined;
+    const sessionToken = input.newPassword ? randomToken() : undefined;
+    const result = await this.db.transaction(async (tx) => {
+      const [updated] = await tx
+        .update(admins)
+        .set({
+          ...(displayName === undefined ? {} : { displayName }),
+          ...(passwordHash ? { passwordHash } : {}),
+          updatedAt: new Date(),
+        })
+        .where(eq(admins.id, adminId))
+        .returning();
+      if (!updated) return null;
+      const linkedAccounts = await tx
+        .select({ id: userAccounts.id })
+        .from(userAccounts)
+        .where(eq(userAccounts.linkedAdminId, adminId));
+      const linkedUserIds = linkedAccounts.map((row) => row.id);
+      const roomIds = linkedUserIds.length
+        ? (
+            await tx
+              .select({ roomId: players.roomId })
+              .from(players)
+              .innerJoin(rooms, eq(players.roomId, rooms.id))
+              .where(and(inArray(players.userId, linkedUserIds), ne(rooms.status, 'ARCHIVED')))
+          ).map((row) => row.roomId)
+        : [];
+      if (displayName !== undefined && linkedUserIds.length > 0) {
+        await tx
+          .update(userAccounts)
+          .set({ displayName, updatedAt: new Date() })
+          .where(inArray(userAccounts.id, linkedUserIds));
+        await tx
+          .update(players)
+          .set({ nickname: displayName, updatedAt: new Date() })
+          .where(inArray(players.userId, linkedUserIds));
+      }
+      if (sessionToken) {
+        await tx.delete(adminSessions).where(eq(adminSessions.adminId, adminId));
+        await tx.insert(adminSessions).values({
+          adminId,
+          tokenHash: hashOpaqueToken(sessionToken, this.config.TOKEN_PEPPER),
+          expiresAt: expiresAt(),
+        });
+      }
+      return {
+        admin: { id: updated.id, username: updated.username, displayName: updated.displayName },
+        ...(sessionToken ? { sessionToken } : {}),
+        roomIds,
+      };
+    });
+    return result;
   }
 
   public async createUserAccount(
@@ -381,6 +637,13 @@ export class PokerRepository {
         const account = rows[0];
         if (!account) throw new Error('USERNAME_TAKEN');
         if (account) {
+          await tx.insert(accountLedgerEntries).values({
+            userId: account.id,
+            kind: 'ACCOUNT_INITIAL_GRANT',
+            delta: account.chipBalance,
+            balanceAfter: account.chipBalance,
+            metadata: { source: 'ADMIN' },
+          });
           await tx.insert(auditLogs).values({
             adminId,
             action: 'USER_ACCOUNT_CREATED',
@@ -429,14 +692,28 @@ export class PokerRepository {
       .from(userAccounts)
       .where(eq(userAccounts.linkedAdminId, admin.id))
       .limit(1);
-    if (existing) return userSession(existing);
+    if (existing) {
+      if (existing.displayName !== admin.displayName) {
+        const [updated] = await this.db
+          .update(userAccounts)
+          .set({ displayName: admin.displayName, updatedAt: new Date() })
+          .where(eq(userAccounts.id, existing.id))
+          .returning();
+        await this.db
+          .update(players)
+          .set({ nickname: admin.displayName, updatedAt: new Date() })
+          .where(eq(players.userId, existing.id));
+        return userSession(updated ?? existing);
+      }
+      return userSession(existing);
+    }
     try {
       const [created] = await this.db.transaction(async (tx) => {
         const rows = await tx
           .insert(userAccounts)
           .values({
             username: `admin-${admin.id}`,
-            displayName: admin.username,
+            displayName: admin.displayName,
             passwordHash: null,
             mustChangePassword: false,
             loginEnabled: false,
@@ -446,6 +723,13 @@ export class PokerRepository {
           .returning();
         const account = rows[0];
         if (account) {
+          await tx.insert(accountLedgerEntries).values({
+            userId: account.id,
+            kind: 'ACCOUNT_INITIAL_GRANT',
+            delta: account.chipBalance,
+            balanceAfter: account.chipBalance,
+            metadata: { source: 'ADMIN_PLAYER' },
+          });
           await tx.insert(auditLogs).values({
             adminId: admin.id,
             action: 'ADMIN_PLAYER_ACCOUNT_CREATED',
@@ -477,8 +761,8 @@ export class PokerRepository {
   public async resetUserPassword(
     adminId: string,
     userId: string,
-    password: string,
-  ): Promise<boolean> {
+  ): Promise<{ password: string } | null> {
+    const password = randomToken(9);
     const passwordHash = await argon2.hash(password, USER_PASSWORD_OPTIONS);
     return this.db.transaction(async (tx) => {
       const updated = await tx
@@ -486,14 +770,14 @@ export class PokerRepository {
         .set({ passwordHash, mustChangePassword: false, loginEnabled: true, updatedAt: new Date() })
         .where(eq(userAccounts.id, userId))
         .returning({ id: userAccounts.id });
-      if (updated.length === 0) return false;
+      if (updated.length === 0) return null;
       await tx.delete(userSessions).where(eq(userSessions.userId, userId));
       await tx.insert(auditLogs).values({
         adminId,
         action: 'USER_PASSWORD_RESET',
-        metadata: { userId },
+        metadata: { userId, generated: true },
       });
-      return true;
+      return { password };
     });
   }
 
@@ -519,6 +803,8 @@ export class PokerRepository {
         playerId: null,
         nickname: null,
         stack: 0,
+        topUpTotal: 0,
+        lastTopUpAmount: 0,
         committedStreet: 0,
         committedHand: 0,
         ready: false,
@@ -544,6 +830,7 @@ export class PokerRepository {
       nextHandAt: null,
       readyCount: 0,
       requiredReadyCount: 0,
+      ownerPlayerId: null,
       createdAt: now,
       updatedAt: now,
     };
@@ -559,6 +846,7 @@ export class PokerRepository {
         mode: settings.mode,
         settings,
         createdByAdminId: admin.id,
+        createdByUserId: null,
         publicSnapshot,
       });
       await tx.insert(roomInvites).values({
@@ -574,6 +862,132 @@ export class PokerRepository {
       });
     });
     return { roomId, inviteToken };
+  }
+
+  public async createUserRoom(
+    user: AuthenticatedUser,
+    name: string,
+    settings: RoomSettings,
+  ): Promise<{ roomId: string; inviteToken: string; playerId: string }> {
+    const roomId = randomUUID();
+    const inviteToken = randomToken();
+    const now = new Date().toISOString();
+    const playerId = randomUUID();
+    const publicSnapshot: PublicRoomProjection = {
+      roomId,
+      name,
+      mode: settings.mode,
+      status: 'LOBBY',
+      settings,
+      serverSeq: 0,
+      handNumber: 0,
+      phase: null,
+      seats: Array.from({ length: 6 }, (_, seat) => ({
+        seat,
+        playerId: seat === 0 ? playerId : null,
+        nickname: seat === 0 ? user.displayName : null,
+        stack: seat === 0 ? settings.startingStack : 0,
+        topUpTotal: 0,
+        lastTopUpAmount: 0,
+        committedStreet: 0,
+        committedHand: 0,
+        ready: false,
+        connected: false,
+        sittingOut: false,
+        folded: false,
+        allIn: false,
+        role: null,
+        positions: [],
+        isActing: false,
+        hasCards: false,
+      })),
+      communityCards: [],
+      pots: [],
+      actingSeat: null,
+      buttonSeat: null,
+      smallBlindSeat: null,
+      bigBlindSeat: null,
+      liveDealerSeat: null,
+      pendingLiveStreet: null,
+      prompt: null,
+      liveResultProposal: null,
+      nextHandAt: null,
+      readyCount: 0,
+      requiredReadyCount: 1,
+      ownerPlayerId: playerId,
+      createdAt: now,
+      updatedAt: now,
+    };
+    const encrypted = encryptSnapshot(
+      { runtimeVersion: 1, public: publicSnapshot },
+      this.config.SNAPSHOT_KEY,
+    );
+    await this.db.transaction(async (tx) => {
+      await tx
+        .select({ id: userAccounts.id })
+        .from(userAccounts)
+        .where(eq(userAccounts.id, user.id))
+        .for('update');
+      const [account] = await tx
+        .select({ chipBalance: userAccounts.chipBalance })
+        .from(userAccounts)
+        .where(eq(userAccounts.id, user.id))
+        .limit(1);
+      if (!account || account.chipBalance < settings.startingStack) {
+        throw new Error('INSUFFICIENT_ACCOUNT_CHIPS');
+      }
+      await tx.insert(rooms).values({
+        id: roomId,
+        name,
+        mode: settings.mode,
+        settings,
+        createdByAdminId: null,
+        createdByUserId: user.id,
+        publicSnapshot,
+      });
+      await tx.insert(players).values({
+        id: playerId,
+        roomId,
+        userId: user.id,
+        nickname: user.displayName,
+        stack: settings.startingStack,
+        seat: 0,
+      });
+      const balanceAfter = account.chipBalance - settings.startingStack;
+      await tx
+        .update(userAccounts)
+        .set({ chipBalance: balanceAfter, updatedAt: new Date() })
+        .where(eq(userAccounts.id, user.id));
+      await tx.insert(ledgerEntries).values({
+        roomId,
+        seq: 0,
+        playerId,
+        kind: 'INITIAL_ALLOCATION',
+        delta: settings.startingStack,
+        balanceAfter: settings.startingStack,
+        metadata: { source: 'ROOM_CREATION' },
+      });
+      await tx.insert(accountLedgerEntries).values({
+        userId: user.id,
+        roomId,
+        playerId,
+        kind: 'ROOM_BUY_IN',
+        delta: -settings.startingStack,
+        balanceAfter,
+        metadata: { source: 'ROOM_CREATION' },
+      });
+      await tx.insert(roomInvites).values({
+        roomId,
+        tokenHash: hashOpaqueToken(inviteToken, this.config.TOKEN_PEPPER),
+      });
+      await tx.insert(privateSnapshots).values({ roomId, seq: 0, ...encrypted });
+      await tx.insert(auditLogs).values({
+        roomId,
+        action: 'ROOM_CREATED_BY_USER',
+        metadata: { userId: user.id, playerId },
+      });
+    });
+    return { roomId, inviteToken, playerId };
   }
 
   public async listRooms(origin: string): Promise<AdminRoomSummary[]> {
@@ -649,7 +1063,6 @@ export class PokerRepository {
   public async joinByInvite(
     inviteToken: string,
     userId: string,
-    nickname?: string,
   ): Promise<{ roomId: string; playerId: string } | null> {
     const tokenHash = hashOpaqueToken(inviteToken, this.config.TOKEN_PEPPER);
     const [invite] = await this.db
@@ -670,14 +1083,7 @@ export class PokerRepository {
       .limit(1);
     if (!invite) return null;
     try {
-      return await this.addUserToRoom(
-        invite.roomId,
-        userId,
-        nickname,
-        'INVITE',
-        undefined,
-        tokenHash,
-      );
+      return await this.addUserToRoom(invite.roomId, userId, 'INVITE', undefined, tokenHash);
     } catch (error) {
       if (error instanceof Error && error.message === 'INVITE_NOT_FOUND') return null;
       throw error;
@@ -687,15 +1093,13 @@ export class PokerRepository {
   public async addUserToRoom(
     roomId: string,
     userId: string,
-    nickname: string | undefined,
     source: 'INVITE' | 'ADMIN' | 'SELF',
     adminId?: string,
     inviteTokenHash?: string,
   ): Promise<{ roomId: string; playerId: string }> {
     try {
       return await this.db.transaction(async (tx) => {
-        // Serialize membership changes for this room so concurrent invite joins
-        // cannot exceed capacity or claim the same case-insensitive nickname.
+        // Serialize membership changes for this room so concurrent joins cannot exceed capacity.
         await tx.execute(
           sql`select ${rooms.id} from ${rooms} where ${rooms.id} = ${roomId} for update`,
         );
@@ -722,6 +1126,7 @@ export class PokerRepository {
           .select()
           .from(userAccounts)
           .where(eq(userAccounts.id, userId))
+          .for('update')
           .limit(1);
         if (!account) throw new Error('USER_NOT_FOUND');
 
@@ -742,10 +1147,7 @@ export class PokerRepository {
         const settings = room.settings as RoomSettings;
         if ((count?.value ?? 0) >= settings.maxPlayers) throw new Error('ROOM_FULL');
 
-        const fallbackNickname = account.linkedAdminId
-          ? account.displayName.slice(0, 20)
-          : account.displayName;
-        const playerNickname = nickname?.trim() || fallbackNickname;
+        const playerNickname = account.displayName.trim().slice(0, 20);
         if (
           playerNickname.length === 0 ||
           playerNickname.length > 20 ||
@@ -753,18 +1155,10 @@ export class PokerRepository {
         ) {
           throw new Error('INVALID_NICKNAME');
         }
-        const duplicate = await tx
-          .select({ id: players.id })
-          .from(players)
-          .where(
-            and(
-              eq(players.roomId, roomId),
-              ne(players.membershipStatus, 'KICKED'),
-              sql`lower(${players.nickname}) = lower(${playerNickname})`,
-            ),
-          )
-          .limit(1);
-        if (duplicate.length > 0) throw new Error('NICKNAME_TAKEN');
+
+        if (account.chipBalance < settings.startingStack) {
+          throw new Error('INSUFFICIENT_ACCOUNT_CHIPS');
+        }
 
         const inserted = await tx
           .insert(players)
@@ -777,6 +1171,11 @@ export class PokerRepository {
           .returning({ id: players.id });
         const player = inserted[0];
         if (!player) throw new Error('Failed to create room membership');
+        const accountBalanceAfter = account.chipBalance - settings.startingStack;
+        await tx
+          .update(userAccounts)
+          .set({ chipBalance: accountBalanceAfter, updatedAt: new Date() })
+          .where(eq(userAccounts.id, userId));
         await tx.insert(ledgerEntries).values({
           roomId,
           seq: room.serverSeq,
@@ -784,6 +1183,15 @@ export class PokerRepository {
           kind: 'INITIAL_ALLOCATION',
           delta: settings.startingStack,
           balanceAfter: settings.startingStack,
+          metadata: { source },
+        });
+        await tx.insert(accountLedgerEntries).values({
+          userId,
+          roomId,
+          playerId: player.id,
+          kind: 'ROOM_BUY_IN',
+          delta: -settings.startingStack,
+          balanceAfter: accountBalanceAfter,
           metadata: { source },
         });
         if (adminId) {
@@ -1011,6 +1419,19 @@ export class PokerRepository {
       .from(players)
       .where(eq(players.roomId, roomId))
       .orderBy(asc(players.seat), asc(players.createdAt));
+    const accountChipsByUserId: Record<string, number> = {};
+    if (roomPlayers.length > 0) {
+      const accounts = await this.db
+        .select({ id: userAccounts.id, chipBalance: userAccounts.chipBalance })
+        .from(userAccounts)
+        .where(
+          inArray(
+            userAccounts.id,
+            roomPlayers.map((player) => player.userId),
+          ),
+        );
+      for (const account of accounts) accountChipsByUserId[account.id] = account.chipBalance;
+    }
     const [snapshot] = await this.db
       .select()
       .from(privateSnapshots)
@@ -1028,7 +1449,54 @@ export class PokerRepository {
         this.config.SNAPSHOT_KEY,
       );
     }
-    return { room, players: roomPlayers, privateState };
+    return { room, players: roomPlayers, privateState, accountChipsByUserId };
+  }
+
+  public async getChipLedger(roomId: string, userId: string): Promise<ChipLedgerResponse> {
+    const roomRows = await this.db
+      .select({
+        id: ledgerEntries.id,
+        playerId: ledgerEntries.playerId,
+        nickname: players.nickname,
+        kind: ledgerEntries.kind,
+        delta: ledgerEntries.delta,
+        balanceAfter: ledgerEntries.balanceAfter,
+        handId: ledgerEntries.handId,
+        metadata: ledgerEntries.metadata,
+        createdAt: ledgerEntries.createdAt,
+      })
+      .from(ledgerEntries)
+      .innerJoin(players, eq(ledgerEntries.playerId, players.id))
+      .where(eq(ledgerEntries.roomId, roomId))
+      .orderBy(desc(ledgerEntries.createdAt));
+    const accountRows = await this.db
+      .select({
+        id: accountLedgerEntries.id,
+        playerId: accountLedgerEntries.playerId,
+        nickname: players.nickname,
+        kind: accountLedgerEntries.kind,
+        delta: accountLedgerEntries.delta,
+        balanceAfter: accountLedgerEntries.balanceAfter,
+        handId: sql<string | null>`null`,
+        metadata: accountLedgerEntries.metadata,
+        createdAt: accountLedgerEntries.createdAt,
+      })
+      .from(accountLedgerEntries)
+      .leftJoin(players, eq(accountLedgerEntries.playerId, players.id))
+      .where(eq(accountLedgerEntries.userId, userId))
+      .orderBy(desc(accountLedgerEntries.createdAt));
+    return {
+      room: roomRows.map((row) => ({
+        ...row,
+        metadata: row.metadata as Record<string, unknown>,
+        createdAt: row.createdAt.toISOString(),
+      })),
+      account: accountRows.map((row) => ({
+        ...row,
+        metadata: row.metadata as Record<string, unknown>,
+        createdAt: row.createdAt.toISOString(),
+      })),
+    };
   }
 
   public async getCommandResult(
@@ -1149,6 +1617,30 @@ export class PokerRepository {
             metadata: mutation.metadata ?? {},
           })),
         );
+      }
+      if (commit.accountLedgerMutations && commit.accountLedgerMutations.length > 0) {
+        for (const mutation of commit.accountLedgerMutations) {
+          const updated = await tx
+            .update(userAccounts)
+            .set({ chipBalance: mutation.balanceAfter, updatedAt: new Date() })
+            .where(
+              and(
+                eq(userAccounts.id, mutation.userId),
+                eq(userAccounts.chipBalance, mutation.beforeBalance),
+              ),
+            )
+            .returning({ id: userAccounts.id });
+          if (updated.length !== 1) throw new Error('ACCOUNT_CHIP_BALANCE_CONFLICT');
+          await tx.insert(accountLedgerEntries).values({
+            userId: mutation.userId,
+            roomId: commit.roomId,
+            playerId: mutation.playerId ?? null,
+            kind: mutation.kind,
+            delta: mutation.delta,
+            balanceAfter: mutation.balanceAfter,
+            metadata: mutation.metadata ?? {},
+          });
+        }
       }
       if (commit.liveProposal) {
         await tx.insert(liveResultProposals).values({

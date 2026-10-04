@@ -114,6 +114,8 @@ function projectSeat(state: RuntimeRoomState, seat: number): PublicSeat {
       playerId: null,
       nickname: null,
       stack: 0,
+      topUpTotal: 0,
+      lastTopUpAmount: 0,
       committedStreet: 0,
       committedHand: 0,
       ready: false,
@@ -144,6 +146,8 @@ function projectSeat(state: RuntimeRoomState, seat: number): PublicSeat {
     playerId: player.id,
     nickname: player.nickname,
     stack: !isSettled && bettingPlayer ? bettingPlayer.stack : player.stack,
+    topUpTotal: player.topUpTotal,
+    lastTopUpAmount: player.lastTopUpAmount,
     committedStreet: isSettled ? 0 : (bettingPlayer?.committedStreet ?? 0),
     committedHand: isSettled ? 0 : (bettingPlayer?.committedHand ?? 0),
     ready: player.ready,
@@ -167,8 +171,8 @@ function projectSeat(state: RuntimeRoomState, seat: number): PublicSeat {
 /**
  * Folded players may spectate the live hole cards of everyone still
  * contesting the pot. The reveal is server-gated: the cards are only ever
- * projected to a player whose own hand is already dead, and other folded
- * players' (mucked) cards stay hidden.
+ * projected to a player whose own hand is already dead. Folded spectators
+ * can inspect the other folded hands as well, while their own cards remain private.
  */
 function buildPeekCards(
   state: RuntimeRoomState,
@@ -180,7 +184,7 @@ function buildPeekCards(
   if (!viewer?.folded) return {};
   const peekCards: Record<string, Card[]> = {};
   for (const contender of hand.betting.players) {
-    if (contender.playerId === viewerId || contender.folded) continue;
+    if (contender.playerId === viewerId) continue;
     const cards = hand.holeCards[contender.playerId];
     if (cards?.length) peekCards[contender.playerId] = [...cards];
   }
@@ -193,7 +197,6 @@ export function buildProjections(state: RuntimeRoomState): ProjectionBundle {
   const eligibleForNextHand = state.players.filter(
     (player) =>
       player.seat !== null &&
-      player.connected &&
       !player.sittingOut &&
       player.stack > 0 &&
       player.membershipStatus === 'ACTIVE',
@@ -226,6 +229,7 @@ export function buildProjections(state: RuntimeRoomState): ProjectionBundle {
     updatedAt: state.updatedAt,
     readyCount: eligibleForNextHand.filter((player) => player.ready).length,
     requiredReadyCount: eligibleForNextHand.length,
+    ownerPlayerId: state.players.find((player) => player.userId === state.ownerUserId)?.id ?? null,
   } as PublicRoomProjection;
   const privateByPlayerId: Record<string, PrivatePlayerProjection> = {};
   for (const player of state.players) {
@@ -236,6 +240,7 @@ export function buildProjections(state: RuntimeRoomState): ProjectionBundle {
       roomId: state.roomId,
       seat: player.seat,
       holeCards: hand?.holeCards[player.id] ?? [],
+      accountChips: player.accountChips,
       ...(ownsTurn ? { turnToken: hand.turnToken as string } : {}),
       ...buildPeekCards(state, player.id),
     };

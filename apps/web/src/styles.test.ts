@@ -48,3 +48,11 @@ describe('interaction accessibility safeguards', () => {
     expect(css).not.toContain('@keyframes fade-notice');
   });
 });
+
+describe('theme and notice presentation', () => {
+  it('follows the browser color scheme and keeps notices in layout flow', () => {
+    expect(css).toMatch(/color-scheme:\s*light dark/);
+    expect(css).toMatch(/@media\s*\(prefers-color-scheme:\s*dark\)/);
+    expect(css).toMatch(/\.table-notice-wrap\s*\{[\s\S]*?position:\s*relative/);
+  });
+});

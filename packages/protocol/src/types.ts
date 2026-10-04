@@ -36,6 +36,8 @@ export interface PublicSeat {
   playerId: string | null;
   nickname: string | null;
   stack: number;
+  topUpTotal?: number;
+  lastTopUpAmount?: number;
   committedStreet: number;
   committedHand: number;
   ready: boolean;
@@ -99,6 +101,7 @@ export interface PublicRoomProjection {
   nextHandAt: string | null;
   readyCount: number;
   requiredReadyCount: number;
+  ownerPlayerId?: string | null;
   createdAt: string;
   updatedAt: string;
 }
@@ -108,6 +111,7 @@ export interface PrivatePlayerProjection {
   roomId: string;
   seat: number | null;
   holeCards: Card[];
+  accountChips?: number;
   turnToken?: string;
   /**
    * Live hole cards of players still contesting the pot, keyed by playerId.
@@ -171,6 +175,7 @@ export interface UserSession {
   username: string;
   displayName: string;
   mustChangePassword: boolean;
+  chipBalance?: number;
 }
 
 export interface UserRoomSummary {
@@ -216,6 +221,23 @@ export interface AdminUserSummary extends UserSession {
   createdAt: string;
 }
 
+export interface ChipLedgerEntry {
+  id: string;
+  playerId: string | null;
+  nickname: string | null;
+  kind: string;
+  delta: number;
+  balanceAfter: number;
+  handId: string | null;
+  metadata: Record<string, unknown>;
+  createdAt: string;
+}
+
+export interface ChipLedgerResponse {
+  room: ChipLedgerEntry[];
+  account: ChipLedgerEntry[];
+}
+
 export interface AdminRoomPlayerSummary {
   playerId: string;
   userId: string;
@@ -257,8 +279,8 @@ export interface HandHistoryItem {
 export const DEFAULT_ROOM_SETTINGS: Omit<RoomSettings, 'mode'> = {
   smallBlind: 10,
   bigBlind: 20,
-  startingStack: 2_000,
-  stackCap: 2_000,
+  startingStack: 5_000,
+  stackCap: 5_000,
   actionTimeoutSeconds: 30,
   resultDisplaySeconds: 3,
   nextHandCountdownSeconds: 5,

@@ -67,6 +67,7 @@ interface MutationExtras {
   eventType: string;
   publicPayload?: Record<string, unknown>;
   ledgerMutations?: RoomCommit['ledgerMutations'];
+  accountLedgerMutations?: RoomCommit['accountLedgerMutations'];
   handStart?: RoomCommit['handStart'];
   handUpdate?: RoomCommit['handUpdate'];
   liveProposal?: RoomCommit['liveProposal'];
@@ -122,6 +123,7 @@ function commandRequestHash(playerId: string, envelope: CommandEnvelopeLike): st
 }
 
 function asRuntimeState(loaded: LoadedRoom): RuntimeRoomState {
+  const accountChipsByUserId = loaded.accountChipsByUserId ?? {};
   const stored = loaded.privateState as Partial<RuntimeRoomState> | null;
   if (
     stored?.runtimeVersion === 1 &&
@@ -137,9 +139,17 @@ function asRuntimeState(loaded: LoadedRoom): RuntimeRoomState {
     const rowsById = new Map(loaded.players.map((player) => [player.id, player]));
     return {
       ...runtimeState,
+      ownerUserId: loaded.room.createdByUserId ?? runtimeState.ownerUserId ?? null,
       // Socket presence cannot survive a process restart.
       players: (stored.players as RuntimePlayer[]).map((player) => ({
         ...player,
+        userId: rowsById.get(player.id)?.userId ?? player.userId,
+        accountChips:
+          accountChipsByUserId[rowsById.get(player.id)?.userId ?? player.userId] ??
+          player.accountChips ??
+          50_000,
+        topUpTotal: player.topUpTotal ?? 0,
+        lastTopUpAmount: player.lastTopUpAmount ?? 0,
         connected: false,
         membershipStatus:
           rowsById.get(player.id)?.membershipStatus ?? player.membershipStatus ?? 'ACTIVE',
@@ -161,6 +171,7 @@ function asRuntimeState(loaded: LoadedRoom): RuntimeRoomState {
     runtimeVersion: 1,
     roomId: loaded.room.id,
     name: loaded.room.name,
+    ownerUserId: loaded.room.createdByUserId,
     settings: loaded.room.settings as RuntimeRoomState['settings'],
     status: loaded.room.status,
     serverSeq: loaded.room.serverSeq,
@@ -168,9 +179,13 @@ function asRuntimeState(loaded: LoadedRoom): RuntimeRoomState {
     previousButtonSeat: null,
     players: loaded.players.map((player) => ({
       id: player.id,
+      userId: player.userId,
       nickname: player.nickname,
       seat: player.seat,
       stack: player.stack,
+      accountChips: accountChipsByUserId[player.userId] ?? 50_000,
+      topUpTotal: 0,
+      lastTopUpAmount: 0,
       ready: player.ready,
       connected: false,
       sittingOut: player.sittingOut,
@@ -206,7 +221,6 @@ function eligiblePlayers(state: RuntimeRoomState): RuntimePlayer[] {
     .filter(
       (player) =>
         player.seat !== null &&
-        player.connected &&
         !player.sittingOut &&
         player.stack > 0 &&
         player.membershipStatus === 'ACTIVE',
@@ -215,12 +229,12 @@ function eligiblePlayers(state: RuntimeRoomState): RuntimePlayer[] {
 }
 
 function activePlayers(state: RuntimeRoomState): RuntimePlayer[] {
-  return eligiblePlayers(state).filter((player) => player.ready);
+  return eligiblePlayers(state).filter((player) => player.connected && player.ready);
 }
 
 function everyoneReady(state: RuntimeRoomState): boolean {
   const eligible = eligiblePlayers(state);
-  return eligible.length >= 2 && eligible.every((player) => player.ready);
+  return eligible.length >= 2 && eligible.every((player) => player.connected && player.ready);
 }
 
 function resetReadyConfirmations(state: RuntimeRoomState): void {
@@ -867,6 +881,9 @@ export class RoomActor {
       },
       playerMutations: playerMutations(this.state),
       ...(extras.ledgerMutations ? { ledgerMutations: extras.ledgerMutations } : {}),
+      ...(extras.accountLedgerMutations
+        ? { accountLedgerMutations: extras.accountLedgerMutations }
+        : {}),
       ...(extras.handStart ? { handStart: extras.handStart } : {}),
       ...(extras.handUpdate ? { handUpdate: extras.handUpdate } : {}),
       ...(command ? { command } : {}),
@@ -1014,17 +1031,23 @@ export class RoomActor {
     return this.enqueue(async () => {
       const existing = new Map(this.state.players.map((player) => [player.id, player]));
       let changed = false;
+      const accountChipsByUserId = loaded.accountChipsByUserId ?? {};
+      this.state.ownerUserId = loaded.room.createdByUserId ?? this.state.ownerUserId ?? null;
       for (const row of loaded.players) {
         const current = existing.get(row.id);
         if (current) {
           const kickedAt = row.kickedAt?.toISOString() ?? null;
           if (
+            current.nickname !== row.nickname ||
+            current.accountChips !== (accountChipsByUserId[row.userId] ?? current.accountChips) ||
             current.membershipStatus !== row.membershipStatus ||
             current.kickedAt !== kickedAt ||
             current.kickedByAdminId !== row.kickedByAdminId ||
             current.kickReason !== row.kickReason
           ) {
+            current.nickname = row.nickname;
             current.membershipStatus = row.membershipStatus;
+            current.accountChips = accountChipsByUserId[row.userId] ?? current.accountChips;
             current.kickedAt = kickedAt;
             current.kickedByAdminId = row.kickedByAdminId;
             current.kickReason = row.kickReason;
@@ -1035,9 +1058,13 @@ export class RoomActor {
         changed = true;
         this.state.players.push({
           id: row.id,
+          userId: row.userId,
           nickname: row.nickname,
           seat: row.seat,
           stack: row.stack,
+          accountChips: accountChipsByUserId[row.userId] ?? 50_000,
+          topUpTotal: 0,
+          lastTopUpAmount: 0,
           ready: row.ready,
           connected: false,
           sittingOut: row.sittingOut,
@@ -1060,7 +1087,7 @@ export class RoomActor {
       if (!player || player.connected === connected || this.state.status === 'ARCHIVED') return;
       player.connected = connected;
       if (this.state.status !== 'ACTIVE') {
-        resetReadyConfirmations(this.state);
+        if (!connected) resetReadyConfirmations(this.state);
       } else if (!connected) {
         player.ready = false;
       }
@@ -1101,6 +1128,11 @@ export class RoomActor {
       if (!player.connected) throw new RoomRuleError('CONFLICT', '离线玩家不能确认下一手');
       if (this.state.status !== 'LOBBY' && this.state.status !== 'BETWEEN_HANDS')
         throw new RoomRuleError('CONFLICT', '只能在两手之间确认下一手');
+      const wasReady = player.ready;
+      if (wasReady) {
+        player.ready = false;
+        return { eventType: 'PLAYER_UNREADY', publicPayload: { playerId } };
+      }
       if (player.sittingOut) resetReadyConfirmations(this.state);
       player.ready = true;
       player.sittingOut = false;
@@ -1139,17 +1171,40 @@ export class RoomActor {
         throw new RoomRuleError('BAD_REQUEST', '补充操作必须补至牌桌上限');
       }
       const before = player.stack;
+      const topUpAmount = this.state.settings.stackCap - before;
+      if (player.accountChips < topUpAmount) {
+        throw new RoomRuleError('CONFLICT', '账户筹码不足，请先补充账户余额');
+      }
       player.stack = this.state.settings.stackCap;
+      player.accountChips -= topUpAmount;
+      player.topUpTotal += topUpAmount;
+      player.lastTopUpAmount = topUpAmount;
       resetReadyConfirmations(this.state);
       return {
         eventType: 'STACK_TOPPED_UP',
-        publicPayload: { playerId, targetStack: player.stack, confirmationsReset: true },
+        publicPayload: {
+          playerId,
+          targetStack: player.stack,
+          topUpAmount,
+          confirmationsReset: true,
+        },
         ledgerMutations: [
           {
             playerId,
             kind: 'TOP_UP',
             delta: player.stack - before,
             balanceAfter: player.stack,
+          },
+        ],
+        accountLedgerMutations: [
+          {
+            userId: player.userId,
+            playerId,
+            kind: 'ROOM_TOP_UP',
+            delta: -topUpAmount,
+            beforeBalance: player.accountChips + topUpAmount,
+            balanceAfter: player.accountChips,
+            metadata: { targetStack: player.stack },
           },
         ],
       };
@@ -1502,6 +1557,74 @@ export class RoomActor {
           adminId,
           action: pending ? 'PLAYER_KICK_SCHEDULED' : 'PLAYER_KICKED',
           metadata: { operationId, playerId, reason },
+        },
+      });
+      return {
+        ok: true,
+        playerId,
+        membershipStatus: player.membershipStatus,
+        stack: player.stack,
+        ...(pending ? { pending: true } : {}),
+      };
+    });
+  }
+
+  public async ownerKickPlayer(
+    ownerUserId: string,
+    playerId: string,
+    reason: string,
+    operationId: string,
+  ): Promise<AdminPlayerOperationResult> {
+    return this.enqueue(async () => {
+      if (this.state.ownerUserId !== ownerUserId) {
+        return { ok: false, code: 'CONFLICT', message: '只有房主可以移出玩家' };
+      }
+      if (this.state.status === 'ARCHIVED') {
+        return { ok: false, code: 'CONFLICT', message: '已归档牌桌不能移出玩家' };
+      }
+      const player = this.state.players.find((candidate) => candidate.id === playerId);
+      if (!player) return { ok: false, code: 'NOT_FOUND', message: '玩家不存在' };
+      if (player.userId === ownerUserId) {
+        return { ok: false, code: 'CONFLICT', message: '房主不能移出自己' };
+      }
+      if (player.membershipStatus === 'KICKED') {
+        return {
+          ok: true,
+          playerId,
+          membershipStatus: player.membershipStatus,
+          stack: player.stack,
+        };
+      }
+      if (player.membershipStatus === 'KICK_PENDING') {
+        return {
+          ok: true,
+          playerId,
+          membershipStatus: player.membershipStatus,
+          stack: player.stack,
+          pending: true,
+        };
+      }
+      const pending =
+        this.state.status === 'ACTIVE' &&
+        this.state.hand?.participantIds.includes(playerId) === true &&
+        this.state.hand.phase !== 'SETTLED';
+      player.membershipStatus = pending ? 'KICK_PENDING' : 'KICKED';
+      player.kickedByAdminId = null;
+      player.kickReason = reason;
+      player.ready = false;
+      if (!pending) {
+        player.kickedAt = nowIso();
+        player.seat = null;
+        player.sittingOut = true;
+        player.connected = false;
+        resetReadyConfirmations(this.state);
+      }
+      await this.commit({
+        eventType: pending ? 'PLAYER_KICK_SCHEDULED' : 'PLAYER_KICKED',
+        publicPayload: { playerId, pending, confirmationsReset: !pending, by: 'OWNER' },
+        audit: {
+          action: pending ? 'PLAYER_KICK_SCHEDULED_BY_OWNER' : 'PLAYER_KICKED_BY_OWNER',
+          metadata: { operationId, playerId, ownerUserId, reason },
         },
       });
       return {

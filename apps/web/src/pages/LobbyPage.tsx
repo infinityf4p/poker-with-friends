@@ -1,10 +1,20 @@
 import { useEffect, useRef, useState } from 'react';
-import type { RoomMode } from '@poker-with-friends/protocol';
-import { api, type JoinResponse, type LobbyRoomSummary, type UserSession } from '../api';
+import {
+  DEFAULT_ROOM_SETTINGS,
+  type RoomMode,
+  type RoomSettings,
+} from '@poker-with-friends/protocol';
+import {
+  api,
+  type CreateRoomResponse,
+  type JoinResponse,
+  type LobbyRoomSummary,
+  type UserSession,
+} from '../api';
 import { Icon } from '../icons';
 import { formatPoints, statusLabel } from '../poker-ui';
 import { navigate } from '../navigation';
-import { Brand, ErrorBox, IconButton, Loading, ModeBadge } from '../components/ui';
+import { Brand, ErrorBox, IconButton, Loading, Modal, ModeBadge } from '../components/ui';
 import { PlayingCard } from '../components/cards';
 
 export function LobbyPage() {
@@ -17,6 +27,12 @@ export function LobbyPage() {
   const [modeFilter, setModeFilter] = useState<RoomMode | 'ALL'>('ALL');
   const [availableOnly, setAvailableOnly] = useState(false);
   const [loggingOut, setLoggingOut] = useState(false);
+  const [createOpen, setCreateOpen] = useState(false);
+  const [creating, setCreating] = useState(false);
+  const [createError, setCreateError] = useState<string | null>(null);
+  const [registrationInvite, setRegistrationInvite] = useState<string | null>(null);
+  const [creatingInvite, setCreatingInvite] = useState(false);
+  const [profileOpen, setProfileOpen] = useState(false);
   const joiningRef = useRef(false);
   const refreshingRef = useRef(false);
   const loggingOutRef = useRef(false);
@@ -150,6 +166,23 @@ export function LobbyPage() {
     }
   };
 
+  const createRegistrationInvite = async () => {
+    if (creatingInvite) return;
+    setCreatingInvite(true);
+    setError(null);
+    try {
+      const result = await api<{ code: string }>('/api/auth/registration-invites', {
+        method: 'POST',
+      });
+      setRegistrationInvite(result.code);
+      await navigator.clipboard?.writeText(result.code).catch(() => undefined);
+    } catch (caught) {
+      setError(caught instanceof Error ? caught.message : '邀请码生成失败');
+    } finally {
+      setCreatingInvite(false);
+    }
+  };
+
   const visibleRooms = rooms.filter((room) => {
     const canEnter =
       room.membership?.status !== 'KICKED' && (room.availableSeats > 0 || room.membership !== null);
@@ -181,6 +214,26 @@ export function LobbyPage() {
             }
           }
         }}
+        onRegister={async (inviteCode, username, password) => {
+          const generation = sessionGeneration.current;
+          try {
+            const user = await api<UserSession>('/api/auth/register', {
+              method: 'POST',
+              body: JSON.stringify({ inviteCode, username, password }),
+            });
+            if (!mountedRef.current || generation !== sessionGeneration.current) return;
+            sessionGeneration.current += 1;
+            setSession(user);
+            setError(null);
+            await loadRooms().catch((caught) =>
+              setError(caught instanceof Error ? caught.message : '牌桌列表加载失败'),
+            );
+          } catch (caught) {
+            if (mountedRef.current && generation === sessionGeneration.current) {
+              setError(caught instanceof Error ? caught.message : '注册失败');
+            }
+          }
+        }}
       />
     );
   }
@@ -195,6 +248,7 @@ export function LobbyPage() {
             <span>
               <small>@{session.username}</small>
               <strong>{session.displayName}</strong>
+              <small>{formatPoints(session.chipBalance ?? 0)} 账户筹码</small>
             </span>
           </div>
           <IconButton
@@ -204,13 +258,36 @@ export function LobbyPage() {
             busy={loggingOut}
             onClick={() => void logout()}
           />
+          <button
+            type="button"
+            className="text-button account-profile-button"
+            onClick={() => setProfileOpen(true)}
+          >
+            账号设置
+          </button>
+          <button
+            type="button"
+            className="text-button account-invite-button"
+            onClick={() => void createRegistrationInvite()}
+            disabled={creatingInvite}
+          >
+            {creatingInvite ? '生成中…' : '生成注册邀请码'}
+          </button>
         </div>
       </header>
       <div className="page-container lobby-content">
         <section className="lobby-heading">
           <div>
             <h1>牌桌大厅</h1>
+            <p className="lobby-heading__sub">创建牌局后自动成为房主，分享邀请码邀请朋友。</p>
           </div>
+          <button
+            type="button"
+            className="primary-button lobby-create-button"
+            onClick={() => setCreateOpen(true)}
+          >
+            <Icon name="plus" size={17} /> 创建牌局
+          </button>
           <div className="lobby-overview" aria-label="牌桌概览">
             <span>
               <Icon name="table" size={20} />
@@ -226,6 +303,21 @@ export function LobbyPage() {
           </div>
         </section>
         {error && <ErrorBox onClose={() => setError(null)}>{error}</ErrorBox>}
+        {registrationInvite && (
+          <div className="invite-code-banner" role="status">
+            <span>
+              <strong>注册邀请码</strong>
+              <code>{registrationInvite}</code>
+            </span>
+            <button
+              type="button"
+              className="text-button"
+              onClick={() => setRegistrationInvite(null)}
+            >
+              知道了
+            </button>
+          </div>
+        )}
         <section className="lobby-room-section" aria-label="浏览牌桌">
           <header className="lobby-room-toolbar">
             <div className="lobby-filters" role="group" aria-label="牌桌类型">
@@ -300,6 +392,42 @@ export function LobbyPage() {
           <Icon name="table" size={16} /> 管理员入口
         </button>
       </div>
+      {createOpen && (
+        <CreateRoomDialog
+          pending={creating}
+          error={createError}
+          onClose={() => {
+            if (creating) return;
+            setCreateOpen(false);
+            setCreateError(null);
+          }}
+          onSubmit={async (name, settings) => {
+            setCreating(true);
+            setCreateError(null);
+            try {
+              const created = await api<CreateRoomResponse>('/api/rooms', {
+                method: 'POST',
+                body: JSON.stringify({ name, settings }),
+              });
+              navigate(`/room/${created.roomId}`);
+            } catch (caught) {
+              setCreateError(caught instanceof Error ? caught.message : '创建牌局失败');
+            } finally {
+              setCreating(false);
+            }
+          }}
+        />
+      )}
+      {profileOpen && (
+        <UserProfileDialog
+          user={session}
+          onClose={() => setProfileOpen(false)}
+          onSaved={(updated) => {
+            setSession(updated);
+            setProfileOpen(false);
+          }}
+        />
+      )}
     </main>
   );
 }
@@ -430,12 +558,16 @@ function LobbyRoomCard({
 function UserLogin({
   error,
   onSubmit,
+  onRegister,
 }: {
   error: string | null;
   onSubmit: (username: string, password: string) => Promise<void>;
+  onRegister: (inviteCode: string, username: string, password: string) => Promise<void>;
 }) {
+  const [mode, setMode] = useState<'login' | 'register'>('login');
   const [username, setUsername] = useState('');
   const [password, setPassword] = useState('');
+  const [inviteCode, setInviteCode] = useState('');
   const [pending, setPending] = useState(false);
   const [passwordVisible, setPasswordVisible] = useState(false);
   const submittingRef = useRef(false);
@@ -448,24 +580,31 @@ function UserLogin({
           <PlayingCard card="Kh" dealIndex={1} />
         </div>
         <div className="login-heading">
-          <h1>登录</h1>
+          <h1>{mode === 'login' ? '登录' : '邀请码注册'}</h1>
+          <p>{mode === 'login' ? '登录后进入牌桌大厅' : '输入朋友分享的邀请码创建账号'}</p>
         </div>
         {error && <ErrorBox>{error}</ErrorBox>}
         <form
           className="login-form"
           onSubmit={(event) => {
             event.preventDefault();
+            if (username.trim().length < 3) return;
+            if (mode === 'register' && !inviteCode.trim()) return;
             if (submittingRef.current) return;
             submittingRef.current = true;
             setPending(true);
-            void onSubmit(username.trim(), password).finally(() => {
+            const action =
+              mode === 'login'
+                ? onSubmit(username.trim(), password)
+                : onRegister(inviteCode.trim(), username.trim(), password);
+            void action.finally(() => {
               submittingRef.current = false;
               setPending(false);
             });
           }}
         >
           <label className="field field-with-icon">
-            <span>账号</span>
+            <span>用户名</span>
             <span>
               <Icon name="user" size={18} />
               <input
@@ -475,9 +614,28 @@ function UserLogin({
                 autoFocus
                 disabled={pending}
                 required
+                minLength={3}
               />
             </span>
+            {username.length > 0 && username.trim().length < 3 && (
+              <small className="field-error">用户名至少需要 3 位</small>
+            )}
           </label>
+          {mode === 'register' && (
+            <label className="field field-with-icon">
+              <span>邀请码</span>
+              <span>
+                <Icon name="key" size={18} />
+                <input
+                  value={inviteCode}
+                  onChange={(event) => setInviteCode(event.target.value)}
+                  autoComplete="one-time-code"
+                  disabled={pending}
+                  required
+                />
+              </span>
+            </label>
+          )}
           <label className="field field-with-icon">
             <span>密码</span>
             <span>
@@ -489,6 +647,7 @@ function UserLogin({
                 autoComplete="current-password"
                 disabled={pending}
                 required
+                minLength={mode === 'register' ? 6 : 1}
               />
               <button
                 type="button"
@@ -504,17 +663,184 @@ function UserLogin({
           </label>
           <button
             className="primary-button"
-            disabled={pending || !username.trim() || !password}
+            disabled={
+              pending ||
+              username.trim().length < 3 ||
+              !password ||
+              (mode === 'register' && !inviteCode.trim())
+            }
             aria-busy={pending || undefined}
           >
-            {pending ? '正在登录…' : '登录'}
+            {pending
+              ? mode === 'login'
+                ? '正在登录…'
+                : '正在注册…'
+              : mode === 'login'
+                ? '登录'
+                : '创建账号'}
             {!pending && <Icon name="arrow-right" size={18} />}
           </button>
         </form>
+        <button
+          type="button"
+          className="text-button"
+          onClick={() => {
+            setMode((current) => (current === 'login' ? 'register' : 'login'));
+            setPassword('');
+          }}
+        >
+          {mode === 'login' ? '使用邀请码注册' : '已有账号，返回登录'}
+        </button>
         <button type="button" className="text-button" onClick={() => navigate('/admin')}>
           管理员入口
         </button>
       </section>
     </main>
+  );
+}
+
+function UserProfileDialog({
+  user,
+  onClose,
+  onSaved,
+}: {
+  user: UserSession;
+  onClose: () => void;
+  onSaved: (user: UserSession) => void;
+}) {
+  const [displayName, setDisplayName] = useState(user.displayName);
+  const [currentPassword, setCurrentPassword] = useState('');
+  const [newPassword, setNewPassword] = useState('');
+  const [pending, setPending] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+  const passwordChange = newPassword.length > 0;
+  const valid =
+    displayName.trim().length > 0 &&
+    displayName.trim().length <= 20 &&
+    (!currentPassword || (passwordChange && newPassword.length >= 6)) &&
+    (!passwordChange || currentPassword.length > 0);
+  return (
+    <Modal title="账号设置" onClose={onClose} locked={pending}>
+      {error && <ErrorBox onClose={() => setError(null)}>{error}</ErrorBox>}
+      <form
+        className="sheet-form"
+        onSubmit={(event) => {
+          event.preventDefault();
+          if (!valid) return;
+          setPending(true);
+          void api<UserSession>('/api/auth/profile', {
+            method: 'PATCH',
+            body: JSON.stringify({
+              displayName: displayName.trim(),
+              ...(passwordChange ? { currentPassword, newPassword } : {}),
+            }),
+          })
+            .then(onSaved)
+            .catch((caught) => setError(caught instanceof Error ? caught.message : '保存失败'))
+            .finally(() => setPending(false));
+        }}
+      >
+        <label className="field">
+          <span>全局昵称</span>
+          <input
+            value={displayName}
+            onChange={(event) => setDisplayName(event.target.value)}
+            maxLength={20}
+            autoFocus
+          />
+          {displayName.trim().length === 0 || displayName.trim().length > 20 ? (
+            <small className="field-error">昵称需要 1–20 个字符。</small>
+          ) : null}
+        </label>
+        <label className="field">
+          <span>当前密码（修改密码时填写）</span>
+          <input
+            type="password"
+            value={currentPassword}
+            onChange={(event) => setCurrentPassword(event.target.value)}
+            autoComplete="current-password"
+          />
+        </label>
+        <label className="field">
+          <span>新密码（可选）</span>
+          <input
+            type="password"
+            value={newPassword}
+            onChange={(event) => setNewPassword(event.target.value)}
+            autoComplete="new-password"
+            minLength={6}
+          />
+          {newPassword.length > 0 && newPassword.length < 6 && (
+            <small className="field-error">密码至少需要 6 位。</small>
+          )}
+        </label>
+        <button className="primary-button" disabled={pending || !valid}>
+          {pending ? '保存中…' : '保存账号设置'}
+        </button>
+      </form>
+    </Modal>
+  );
+}
+
+function CreateRoomDialog({
+  pending,
+  error,
+  onClose,
+  onSubmit,
+}: {
+  pending: boolean;
+  error: string | null;
+  onClose: () => void;
+  onSubmit: (name: string, settings: RoomSettings) => Promise<void>;
+}) {
+  const [name, setName] = useState('朋友牌局');
+  const [mode, setMode] = useState<RoomMode>('ONLINE');
+  const [submitted, setSubmitted] = useState(false);
+  const valid = name.trim().length > 0;
+  return (
+    <Modal title="创建牌局" onClose={onClose} locked={pending} className="create-room-modal">
+      <form
+        className="stacked-form"
+        onSubmit={(event) => {
+          event.preventDefault();
+          setSubmitted(true);
+          if (!valid) return;
+          void onSubmit(name.trim(), { ...DEFAULT_ROOM_SETTINGS, mode });
+        }}
+      >
+        {error && <ErrorBox>{error}</ErrorBox>}
+        <label className="field">
+          <span>牌局名称</span>
+          <input
+            value={name}
+            onChange={(event) => setName(event.target.value)}
+            maxLength={48}
+            autoFocus
+          />
+          {submitted && !valid && <small className="field-error">请输入牌局名称</small>}
+        </label>
+        <fieldset className="mode-choice">
+          <legend>牌局类型</legend>
+          <label>
+            <input type="radio" checked={mode === 'ONLINE'} onChange={() => setMode('ONLINE')} />
+            <span>线上牌桌</span>
+          </label>
+          <label>
+            <input type="radio" checked={mode === 'LIVE'} onChange={() => setMode('LIVE')} />
+            <span>线下牌桌</span>
+          </label>
+        </fieldset>
+        <p className="form-hint">每位玩家初始带入 5,000 筹码，房主创建后会自动加入 1 号位。</p>
+        <button
+          type="submit"
+          className="primary-button"
+          disabled={pending || !valid}
+          aria-busy={pending || undefined}
+        >
+          {pending ? '正在创建…' : '创建并进入牌桌'}
+          {!pending && <Icon name="arrow-right" size={17} />}
+        </button>
+      </form>
+    </Modal>
   );
 }

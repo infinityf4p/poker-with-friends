@@ -3,14 +3,17 @@ import { z } from 'zod';
 const integerAmount = z.number().int().nonnegative().max(1_000_000_000);
 export const identifierSchema = z.string().uuid();
 export const inviteTokenSchema = z.string().regex(/^[A-Za-z0-9_-]{32,128}$/, '邀请码格式无效');
-const usernameSchema = z
+export const usernameSchema = z
   .string()
   .trim()
-  .min(3)
+  .min(3, '用户名至少需要 3 位')
   .max(64)
   .regex(/^[A-Za-z0-9_.-]+$/, '账号只能包含字母、数字、点、下划线和短横线');
-const userPasswordSchema = z.string().min(6, '密码至少需要 6 位').max(256, '密码不能超过 256 位');
-const nicknameSchema = z
+export const userPasswordSchema = z
+  .string()
+  .min(6, '密码至少需要 6 位')
+  .max(256, '密码不能超过 256 位');
+export const nicknameSchema = z
   .string()
   .trim()
   .min(1)
@@ -59,6 +62,12 @@ export const userLoginSchema = z.object({
   password: z.string().min(1).max(256),
 });
 
+export const registrationSchema = z.object({
+  inviteCode: inviteTokenSchema,
+  username: usernameSchema,
+  password: userPasswordSchema,
+});
+
 export const changeUserPasswordSchema = z
   .object({
     currentPassword: z.string().min(1).max(256),
@@ -68,6 +77,46 @@ export const changeUserPasswordSchema = z
     path: ['newPassword'],
     message: '新密码不能与当前密码相同',
   });
+
+const profileSchema = z
+  .object({
+    displayName: nicknameSchema.optional(),
+    currentPassword: z.string().min(1).max(256).optional(),
+    newPassword: userPasswordSchema.optional(),
+  })
+  .superRefine((value, ctx) => {
+    if (!value.displayName && !value.newPassword) {
+      ctx.addIssue({
+        code: z.ZodIssueCode.custom,
+        path: ['displayName'],
+        message: '请填写昵称或新密码',
+      });
+    }
+    if (value.newPassword && !value.currentPassword) {
+      ctx.addIssue({
+        code: z.ZodIssueCode.custom,
+        path: ['currentPassword'],
+        message: '修改密码前请输入当前密码',
+      });
+    }
+    if (value.currentPassword && !value.newPassword) {
+      ctx.addIssue({
+        code: z.ZodIssueCode.custom,
+        path: ['newPassword'],
+        message: '请输入新密码',
+      });
+    }
+    if (value.currentPassword && value.newPassword && value.currentPassword === value.newPassword) {
+      ctx.addIssue({
+        code: z.ZodIssueCode.custom,
+        path: ['newPassword'],
+        message: '新密码不能与当前密码相同',
+      });
+    }
+  });
+
+export const updateUserProfileSchema = profileSchema;
+export const updateAdminProfileSchema = profileSchema;
 
 export const createUserAccountSchema = z
   .object({
@@ -85,14 +134,9 @@ export const createUserAccountSchema = z
     }
   });
 
-export const resetUserPasswordSchema = z.object({ password: userPasswordSchema });
+export const resetUserPasswordSchema = z.object({}).strict();
 
-export const addRoomMemberSchema = z.object({
-  userId: identifierSchema,
-  nickname: nicknameSchema.optional(),
-});
-
-export const adminPlayAsSelfSchema = z.object({ nickname: nicknameSchema.optional() });
+export const addRoomMemberSchema = z.object({ userId: identifierSchema });
 
 export const adminAdjustStackSchema = z.object({
   stack: integerAmount,
@@ -112,9 +156,7 @@ export const createRoomSchema = z.object({
   settings: roomSettingsSchema,
 });
 
-export const joinRoomSchema = z.object({
-  nickname: nicknameSchema.optional(),
-});
+export const joinRoomSchema = z.object({});
 
 export const commandBaseSchema = z.object({
   commandId: identifierSchema,
@@ -156,11 +198,13 @@ export const liveResultProposalIdCommandSchema = commandBaseSchema.extend({
 
 export type AdminLoginInput = z.infer<typeof adminLoginSchema>;
 export type UserLoginInput = z.infer<typeof userLoginSchema>;
+export type RegistrationInput = z.infer<typeof registrationSchema>;
 export type ChangeUserPasswordInput = z.infer<typeof changeUserPasswordSchema>;
+export type UpdateUserProfileInput = z.infer<typeof updateUserProfileSchema>;
+export type UpdateAdminProfileInput = z.infer<typeof updateAdminProfileSchema>;
 export type CreateUserAccountInput = z.infer<typeof createUserAccountSchema>;
 export type ResetUserPasswordInput = z.infer<typeof resetUserPasswordSchema>;
 export type AddRoomMemberInput = z.infer<typeof addRoomMemberSchema>;
-export type AdminPlayAsSelfInput = z.infer<typeof adminPlayAsSelfSchema>;
 export type AdminAdjustStackInput = z.infer<typeof adminAdjustStackSchema>;
 export type AdminKickPlayerInput = z.infer<typeof adminKickPlayerSchema>;
 export type AdminRestorePlayerInput = z.infer<typeof adminRestorePlayerSchema>;

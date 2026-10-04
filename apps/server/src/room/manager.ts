@@ -164,6 +164,16 @@ export class RoomManager {
     return (await this.actor(roomId)).adminKickPlayer(adminId, playerId, reason, operationId);
   }
 
+  public async ownerKickPlayer(
+    roomId: string,
+    ownerUserId: string,
+    playerId: string,
+    reason: string,
+    operationId: string,
+  ): Promise<AdminPlayerOperationResult> {
+    return (await this.actor(roomId)).ownerKickPlayer(ownerUserId, playerId, reason, operationId);
+  }
+
   public async adminReinstatePlayer(
     roomId: string,
     adminId: string,

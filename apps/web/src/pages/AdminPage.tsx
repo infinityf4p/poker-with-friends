@@ -20,7 +20,6 @@ export function AdminPage() {
   const [tab, setTab] = useState<'rooms' | 'accounts'>('rooms');
   const [error, setError] = useState<string | null>(null);
   const [creating, setCreating] = useState(false);
-  const [creatingAccount, setCreatingAccount] = useState(false);
   const [selectedRoom, setSelectedRoom] = useState<AdminRoomSummary | null>(null);
   const [roomPlayers, setRoomPlayers] = useState<AdminRoomPlayerSummary[]>([]);
   const [roomPlayersLoading, setRoomPlayersLoading] = useState(false);
@@ -28,11 +27,29 @@ export function AdminPage() {
   const [latestInvite, setLatestInvite] = useState<{ roomId: string; url: string } | null>(null);
   const [inviteCopyStatus, setInviteCopyStatus] = useState<'idle' | 'copied'>('idle');
   const [rotatingRoomId, setRotatingRoomId] = useState<string | null>(null);
+  const [registrationInvite, setRegistrationInvite] = useState<string | null>(null);
+  const [registrationInviteLoading, setRegistrationInviteLoading] = useState(false);
+  const [profileOpen, setProfileOpen] = useState(false);
 
   const loadRooms = async () => setRooms(await api<AdminRoomSummary[]>('/api/admin/rooms'));
   const loadUsers = async () => setUsers(await api<AdminUserSummary[]>('/api/admin/users'));
   const loadRoomPlayers = async (roomId: string) =>
     setRoomPlayers(await api<AdminRoomPlayerSummary[]>(`/api/admin/rooms/${roomId}/players`));
+  const createRegistrationInvite = async () => {
+    if (registrationInviteLoading) return;
+    setRegistrationInviteLoading(true);
+    try {
+      const result = await api<{ code: string }>('/api/admin/registration-invites', {
+        method: 'POST',
+      });
+      setRegistrationInvite(result.code);
+      await navigator.clipboard?.writeText(result.code).catch(() => undefined);
+    } catch (caught) {
+      setError(caught instanceof Error ? caught.message : '生成注册邀请码失败');
+    } finally {
+      setRegistrationInviteLoading(false);
+    }
+  };
   useEffect(() => {
     api<AdminSession>('/api/admin/session')
       .then((admin) => {
@@ -106,43 +123,64 @@ export function AdminPage() {
     <main className="dashboard-page real-admin">
       <header className="dashboard-header page-container">
         <Brand />
-        <button
-          className="profile-button"
-          aria-label={`退出管理员账号 ${session.username}`}
-          title="退出管理员账号"
-          onClick={async () => {
-            try {
-              await api('/api/admin/logout', { method: 'POST' });
-              setSession(null);
-            } catch (caught) {
-              setError(caught instanceof Error ? caught.message : '退出登录失败');
-            }
-          }}
-        >
-          <span>
-            <small>管理员</small>
-            <strong>{session.username}</strong>
-          </span>
-          <b className="admin-avatar">
+        <div className="admin-header-actions">
+          <button
+            className="profile-button"
+            aria-label={`编辑管理员资料 ${session.displayName ?? session.username}`}
+            title="账号设置"
+            onClick={() => setProfileOpen(true)}
+          >
+            <span>
+              <small>{session.displayName ?? '管理员'}</small>
+              <strong>@{session.username}</strong>
+            </span>
+            <b className="admin-avatar">
+              <Icon name="settings" size={18} />
+            </b>
+          </button>
+          <button
+            className="icon-button"
+            aria-label="退出管理员账号"
+            title="退出管理员账号"
+            onClick={async () => {
+              try {
+                await api('/api/admin/logout', { method: 'POST' });
+                setSession(null);
+              } catch (caught) {
+                setError(caught instanceof Error ? caught.message : '退出登录失败');
+              }
+            }}
+          >
             <Icon name="logout" size={18} />
-          </b>
-        </button>
+          </button>
+        </div>
       </header>
       <div className="page-container dashboard-content">
         <section className="welcome-row">
           <div>
             <h1>{tab === 'rooms' ? '牌桌管理' : '账号管理'}</h1>
           </div>
-          <button
-            className="create-button"
-            onClick={() => {
-              setError(null);
-              if (tab === 'rooms') setCreating(true);
-              else setCreatingAccount(true);
-            }}
-          >
-            <Icon name="plus" size={18} /> {tab === 'rooms' ? '新建牌桌' : '新建账号'}
-          </button>
+          <div className="welcome-actions">
+            <button
+              className="secondary-button"
+              onClick={() => void createRegistrationInvite()}
+              disabled={registrationInviteLoading}
+            >
+              <Icon name="key" size={17} />{' '}
+              {registrationInviteLoading ? '生成中…' : '生成注册邀请码'}
+            </button>
+            {tab === 'rooms' && (
+              <button
+                className="create-button"
+                onClick={() => {
+                  setError(null);
+                  setCreating(true);
+                }}
+              >
+                <Icon name="plus" size={18} /> 新建牌桌
+              </button>
+            )}
+          </div>
         </section>
         <nav className="admin-tabs" aria-label="管理区">
           <button
@@ -184,6 +222,15 @@ export function AdminPage() {
             >
               {inviteCopyStatus === 'copied' ? '已复制' : '复制'}
             </button>
+          </div>
+        )}
+        {registrationInvite && (
+          <div className="invite-output">
+            <div>
+              <small role="status">注册邀请码（已复制）</small>
+              <code>{registrationInvite}</code>
+            </div>
+            <button onClick={() => setRegistrationInvite(null)}>知道了</button>
           </div>
         )}
         {tab === 'rooms' ? (
@@ -253,12 +300,16 @@ export function AdminPage() {
         ) : (
           <AccountsPanel
             users={users}
-            onReset={async (user, password) => {
-              await api(`/api/admin/users/${user.id}/reset-password`, {
-                method: 'POST',
-                body: JSON.stringify({ password }),
-              });
+            onReset={async (user) => {
+              const result = await api<{ temporaryPassword: string }>(
+                `/api/admin/users/${user.id}/reset-password`,
+                {
+                  method: 'POST',
+                  body: JSON.stringify({}),
+                },
+              );
               await loadUsers();
+              return result;
             }}
           />
         )}
@@ -286,20 +337,6 @@ export function AdminPage() {
           }}
         />
       )}
-      {creatingAccount && (
-        <CreateAccountDialog
-          onClose={() => setCreatingAccount(false)}
-          onCreate={async (body) => {
-            const created = await api<AdminUserSummary>('/api/admin/users', {
-              method: 'POST',
-              body: JSON.stringify(body),
-            });
-            setError(null);
-            setUsers((current) => [...current.filter((user) => user.id !== created.id), created]);
-            setCreatingAccount(false);
-          }}
-        />
-      )}
       {selectedRoom && (
         <RoomPlayersDialog
           room={selectedRoom}
@@ -313,6 +350,16 @@ export function AdminPage() {
           }}
           onRefresh={() => loadRoomPlayers(selectedRoom.id)}
           onError={setRoomPlayersError}
+        />
+      )}
+      {profileOpen && (
+        <AdminProfileDialog
+          admin={session}
+          onClose={() => setProfileOpen(false)}
+          onSaved={(updated) => {
+            setSession(updated);
+            setProfileOpen(false);
+          }}
         />
       )}
     </main>
@@ -372,12 +419,95 @@ function AdminLogin({
   );
 }
 
+function AdminProfileDialog({
+  admin,
+  onClose,
+  onSaved,
+}: {
+  admin: AdminSession;
+  onClose: () => void;
+  onSaved: (admin: AdminSession) => void;
+}) {
+  const [displayName, setDisplayName] = useState(admin.displayName ?? admin.username);
+  const [currentPassword, setCurrentPassword] = useState('');
+  const [newPassword, setNewPassword] = useState('');
+  const [pending, setPending] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+  const passwordChange = newPassword.length > 0;
+  const valid =
+    displayName.trim().length > 0 &&
+    displayName.trim().length <= 20 &&
+    (!currentPassword || (passwordChange && newPassword.length >= 6)) &&
+    (!passwordChange || currentPassword.length > 0);
+  return (
+    <Modal title="管理员账号设置" onClose={onClose} locked={pending}>
+      {error && <ErrorBox onClose={() => setError(null)}>{error}</ErrorBox>}
+      <form
+        className="sheet-form"
+        onSubmit={(event) => {
+          event.preventDefault();
+          if (!valid) return;
+          setPending(true);
+          void api<AdminSession>('/api/admin/profile', {
+            method: 'PATCH',
+            body: JSON.stringify({
+              displayName: displayName.trim(),
+              ...(passwordChange ? { currentPassword, newPassword } : {}),
+            }),
+          })
+            .then(onSaved)
+            .catch((caught) => setError(caught instanceof Error ? caught.message : '保存失败'))
+            .finally(() => setPending(false));
+        }}
+      >
+        <label className="field">
+          <span>全局昵称</span>
+          <input
+            value={displayName}
+            onChange={(event) => setDisplayName(event.target.value)}
+            maxLength={20}
+            autoFocus
+          />
+          {displayName.trim().length === 0 || displayName.trim().length > 20 ? (
+            <small className="field-error">昵称需要 1–20 个字符。</small>
+          ) : null}
+        </label>
+        <label className="field">
+          <span>当前密码（修改密码时填写）</span>
+          <input
+            type="password"
+            value={currentPassword}
+            onChange={(event) => setCurrentPassword(event.target.value)}
+            autoComplete="current-password"
+          />
+        </label>
+        <label className="field">
+          <span>新密码（可选）</span>
+          <input
+            type="password"
+            value={newPassword}
+            onChange={(event) => setNewPassword(event.target.value)}
+            autoComplete="new-password"
+            minLength={6}
+          />
+          {newPassword.length > 0 && newPassword.length < 6 && (
+            <small className="field-error">密码至少需要 6 位。</small>
+          )}
+        </label>
+        <button className="primary-button" disabled={pending || !valid}>
+          {pending ? '保存中…' : '保存账号设置'}
+        </button>
+      </form>
+    </Modal>
+  );
+}
+
 function AccountsPanel({
   users,
   onReset,
 }: {
   users: AdminUserSummary[];
-  onReset: (user: AdminUserSummary, password: string) => Promise<void>;
+  onReset: (user: AdminUserSummary) => Promise<{ temporaryPassword: string }>;
 }) {
   const [resetting, setResetting] = useState<AdminUserSummary | null>(null);
   return (
@@ -393,7 +523,8 @@ function AccountsPanel({
           <span className="account-identity">
             <strong>{user.displayName}</strong>
             <small>
-              @{user.username} · {new Date(user.createdAt).toLocaleDateString()}
+              @{user.username} · {formatPoints(user.chipBalance ?? 0)} 账户筹码 ·{' '}
+              {new Date(user.createdAt).toLocaleDateString()}
             </small>
           </span>
           <span className={`account-state ${user.loginEnabled ? 'active' : ''}`}>
@@ -409,112 +540,10 @@ function AccountsPanel({
         <ResetPasswordDialog
           user={resetting}
           onClose={() => setResetting(null)}
-          onSubmit={async (password) => {
-            await onReset(resetting, password);
-            setResetting(null);
-          }}
+          onSubmit={() => onReset(resetting)}
         />
       )}
     </section>
-  );
-}
-
-function CreateAccountDialog({
-  onClose,
-  onCreate,
-}: {
-  onClose: () => void;
-  onCreate: (body: { username: string; displayName?: string; password: string }) => Promise<void>;
-}) {
-  const [username, setUsername] = useState('');
-  const [displayName, setDisplayName] = useState('');
-  const [password, setPassword] = useState('');
-  const [pending, setPending] = useState(false);
-  const [error, setError] = useState<string | null>(null);
-  const normalizedUsername = username.trim();
-  const usernameValid = /^[A-Za-z0-9_.-]{3,64}$/.test(normalizedUsername);
-  const displayNameValid =
-    displayName.trim().length <= 20 &&
-    (displayName.trim().length > 0 || normalizedUsername.length <= 20);
-  const passwordValid = password.length >= 6 && password.length <= 256;
-  return (
-    <Modal title="新建账号" onClose={onClose}>
-      {error && <ErrorBox onClose={() => setError(null)}>{error}</ErrorBox>}
-      <form
-        className="sheet-form"
-        onSubmit={(event) => {
-          event.preventDefault();
-          if (!usernameValid || !displayNameValid || !passwordValid) return;
-          setError(null);
-          setPending(true);
-          void onCreate({
-            username: normalizedUsername,
-            ...(displayName.trim() ? { displayName: displayName.trim() } : {}),
-            password,
-          })
-            .catch((caught) =>
-              setError(caught instanceof Error ? caught.message : '账号创建失败，请检查输入后重试'),
-            )
-            .finally(() => setPending(false));
-        }}
-      >
-        <label className="field">
-          <span>登录账号</span>
-          <input
-            value={username}
-            onChange={(event) => setUsername(event.target.value)}
-            autoComplete="off"
-            pattern="[A-Za-z0-9_.-]{3,64}"
-            maxLength={64}
-            aria-invalid={username.length > 0 && !usernameValid}
-            required
-            autoFocus
-          />
-          {username.length > 0 && !usernameValid && (
-            <small className="field-error" role="alert">
-              登录账号格式不符合要求。
-            </small>
-          )}
-        </label>
-        <label className="field">
-          <span>显示名称（可选）</span>
-          <input
-            value={displayName}
-            onChange={(event) => setDisplayName(event.target.value)}
-            maxLength={20}
-          />
-          {!displayNameValid && (
-            <small className="field-error" role="alert">
-              请填写不超过 20 个字符的显示名称。
-            </small>
-          )}
-        </label>
-        <label className="field">
-          <span>密码</span>
-          <input
-            type="password"
-            minLength={6}
-            value={password}
-            onChange={(event) => setPassword(event.target.value)}
-            autoComplete="new-password"
-            maxLength={256}
-            aria-invalid={password.length > 0 && !passwordValid}
-            required
-          />
-          {password.length > 0 && !passwordValid && (
-            <small className="field-error" role="alert">
-              {password.length < 6 ? '密码至少需要 6 位。' : '密码不能超过 256 位。'}
-            </small>
-          )}
-        </label>
-        <button
-          className="primary-button"
-          disabled={pending || !usernameValid || !displayNameValid || !passwordValid}
-        >
-          {pending ? '正在创建…' : '创建账号'}
-        </button>
-      </form>
-    </Modal>
   );
 }
 
@@ -525,47 +554,50 @@ function ResetPasswordDialog({
 }: {
   user: AdminUserSummary;
   onClose: () => void;
-  onSubmit: (password: string) => Promise<void>;
+  onSubmit: () => Promise<{ temporaryPassword: string }>;
 }) {
-  const [password, setPassword] = useState('');
   const [pending, setPending] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [temporaryPassword, setTemporaryPassword] = useState<string | null>(null);
   return (
     <Modal title={`重置 ${user.displayName} 的密码`} onClose={onClose}>
       {error && <ErrorBox>{error}</ErrorBox>}
-      <form
-        className="sheet-form"
-        onSubmit={(event) => {
-          event.preventDefault();
-          setPending(true);
-          void onSubmit(password)
-            .catch((caught) => setError(caught instanceof Error ? caught.message : '重置失败'))
-            .finally(() => setPending(false));
-        }}
-      >
-        <label className="field">
-          <span>新密码</span>
-          <input
-            type="password"
-            minLength={6}
-            maxLength={256}
-            value={password}
-            onChange={(event) => setPassword(event.target.value)}
-            autoComplete="new-password"
-            aria-invalid={password.length > 0 && password.length < 6}
-            required
-            autoFocus
-          />
-          {password.length > 0 && password.length < 6 && (
-            <small className="field-error" role="alert">
-              密码至少需要 6 位。
-            </small>
-          )}
-        </label>
-        <button className="primary-button" disabled={pending || password.length < 6}>
-          {pending ? '正在重置…' : '确认重置'}
-        </button>
-      </form>
+      {temporaryPassword ? (
+        <div className="reset-password-result">
+          <p>新密码只显示这一次，请立即复制并安全转交给用户。</p>
+          <code>{temporaryPassword}</code>
+          <div className="modal-actions">
+            <button
+              className="secondary-button"
+              type="button"
+              onClick={() => void navigator.clipboard?.writeText(temporaryPassword)}
+            >
+              复制密码
+            </button>
+            <button className="primary-button" type="button" onClick={onClose}>
+              完成
+            </button>
+          </div>
+        </div>
+      ) : (
+        <div className="sheet-form">
+          <p className="form-hint">系统会生成一组随机密码，并使该账号的旧登录会话失效。</p>
+          <button
+            className="primary-button"
+            type="button"
+            disabled={pending}
+            onClick={() => {
+              setPending(true);
+              void onSubmit()
+                .then((result) => setTemporaryPassword(result.temporaryPassword))
+                .catch((caught) => setError(caught instanceof Error ? caught.message : '重置失败'))
+                .finally(() => setPending(false));
+            }}
+          >
+            {pending ? '正在生成…' : '生成并重置密码'}
+          </button>
+        </div>
+      )}
     </Modal>
   );
 }
@@ -594,7 +626,6 @@ function RoomPlayersDialog({
     return users.filter((user) => user.loginEnabled && !assigned.has(user.id));
   }, [players, users]);
   const [userId, setUserId] = useState(availableUsers[0]?.id ?? '');
-  const [nickname, setNickname] = useState('');
   const [chipPlayer, setChipPlayer] = useState<AdminRoomPlayerSummary | null>(null);
   const [pending, setPending] = useState(false);
 
@@ -637,34 +668,14 @@ function RoomPlayersDialog({
         >
           <Icon name="eye" size={16} /> 旁观
         </button>
-        <button
-          className="secondary-button"
-          disabled={pending}
-          onClick={() => {
-            setPending(true);
-            api<{ roomId: string }>(`/api/admin/rooms/${room.id}/play-as-self`, {
-              method: 'POST',
-              body: JSON.stringify({}),
-            })
-              .then((membership) => navigate(`/room/${membership.roomId}`))
-              .catch((caught) => onError(caught instanceof Error ? caught.message : '加入牌桌失败'))
-              .finally(() => setPending(false));
-          }}
-        >
-          <Icon name="play" size={16} /> 以玩家身份加入
-        </button>
       </div>
       <form
         className="assign-player"
         onSubmit={(event) => {
           event.preventDefault();
           if (!userId) return;
-          void mutate(`/api/admin/rooms/${room.id}/players`, {
-            userId,
-            ...(nickname.trim() ? { nickname: nickname.trim() } : {}),
-          }).then((ok) => {
+          void mutate(`/api/admin/rooms/${room.id}/players`, { userId }).then((ok) => {
             if (!ok) return;
-            setNickname('');
             const next = availableUsers.find((user) => user.id !== userId);
             setUserId(next?.id ?? '');
           });
@@ -683,14 +694,6 @@ function RoomPlayersDialog({
               </option>
             ))}
           </select>
-        </label>
-        <label className="field">
-          <span>桌上昵称（可选）</span>
-          <input
-            value={nickname}
-            onChange={(event) => setNickname(event.target.value)}
-            maxLength={20}
-          />
         </label>
         <button className="primary-button" disabled={!userId || pending}>
           <Icon name="plus" size={16} /> 添加
@@ -850,7 +853,7 @@ function CreateRoomDialog({
   const [name, setName] = useState('周末牌桌');
   const [smallBlind, setSmallBlind] = useState(10);
   const [bigBlind, setBigBlind] = useState(20);
-  const [stack, setStack] = useState(2_000);
+  const [stack, setStack] = useState(5_000);
   const [timeout, setTimeoutValue] = useState(30);
   const [pending, setPending] = useState(false);
   const [error, setError] = useState<string | null>(null);

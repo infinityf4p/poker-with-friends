@@ -5,7 +5,6 @@ import {
   adminAdjustStackSchema,
   adminKickPlayerSchema,
   adminLoginSchema,
-  adminPlayAsSelfSchema,
   adminRestorePlayerSchema,
   changeUserPasswordSchema,
   createRoomSchema,
@@ -14,6 +13,9 @@ import {
   inviteTokenSchema,
   joinRoomSchema,
   resetUserPasswordSchema,
+  registrationSchema,
+  updateAdminProfileSchema,
+  updateUserProfileSchema,
   userLoginSchema,
 } from '@poker-with-friends/protocol';
 import type { AppConfig } from '../config.js';
@@ -135,6 +137,40 @@ export async function registerHttpRoutes(
     },
   );
 
+  app.post(
+    '/api/auth/register',
+    { config: { rateLimit: { max: 6, timeWindow: '1 minute' } } },
+    async (request, reply) => {
+      const parsed = registrationSchema.safeParse(request.body);
+      if (!parsed.success) return sendValidationError(reply, parsed.error.issues);
+      try {
+        const registered = await repository.registerUser(
+          parsed.data.inviteCode,
+          parsed.data.username,
+          parsed.data.password,
+        );
+        reply.setCookie(USER_COOKIE, registered.sessionToken, cookieOptions);
+        return reply.code(201).send(registered.user);
+      } catch (error) {
+        if (error instanceof Error && error.message === 'REGISTRATION_INVITE_INVALID') {
+          return reply
+            .code(400)
+            .send({ error: 'REGISTRATION_INVITE_INVALID', message: '邀请码无效、已使用或已过期' });
+        }
+        if (error instanceof Error && error.message === 'USERNAME_TAKEN') {
+          return reply.code(409).send({ error: 'USERNAME_TAKEN', message: '用户名已存在' });
+        }
+        throw error;
+      }
+    },
+  );
+
+  app.post('/api/auth/registration-invites', async (request, reply) => {
+    const user = await requireUser(request, reply, repository);
+    if (!user) return;
+    return repository.createRegistrationInvite({ userId: user.id });
+  });
+
   app.post('/api/auth/logout', async (request, reply) => {
     await repository.deleteUserSession(request.cookies[USER_COOKIE]);
     reply.clearCookie(USER_COOKIE, { path: '/' });
@@ -163,6 +199,27 @@ export async function registerHttpRoutes(
     return changed.user;
   });
 
+  app.patch('/api/auth/profile', async (request, reply) => {
+    const user = await requireUser(request, reply, repository);
+    if (!user) return;
+    const parsed = updateUserProfileSchema.safeParse(request.body ?? {});
+    if (!parsed.success) return sendValidationError(reply, parsed.error.issues);
+    try {
+      const updated = await repository.updateUserProfile(user.id, parsed.data);
+      if (!updated) {
+        return reply.code(401).send({ error: 'INVALID_CREDENTIALS', message: '当前密码不正确' });
+      }
+      if (updated.sessionToken) reply.setCookie(USER_COOKIE, updated.sessionToken, cookieOptions);
+      await Promise.all(updated.roomIds.map((roomId) => rooms.refreshPlayers(roomId)));
+      return updated.user;
+    } catch (error) {
+      if (error instanceof Error && error.message === 'INVALID_DISPLAY_NAME') {
+        return reply.code(400).send({ error: 'BAD_REQUEST', message: '昵称格式无效' });
+      }
+      throw error;
+    }
+  });
+
   app.get('/api/me/rooms', async (request, reply) => {
     const user = await requireUser(request, reply, repository);
     if (!user) return;
@@ -173,6 +230,28 @@ export async function registerHttpRoutes(
     const user = await requireUser(request, reply, repository);
     if (!user) return;
     return repository.listLobbyRooms(user.id);
+  });
+
+  app.post('/api/rooms', async (request, reply) => {
+    const user = await requireUser(request, reply, repository);
+    if (!user) return;
+    const parsed = createRoomSchema.safeParse(request.body);
+    if (!parsed.success) return sendValidationError(reply, parsed.error.issues);
+    try {
+      const created = await repository.createUserRoom(user, parsed.data.name, parsed.data.settings);
+      return reply.code(201).send({
+        roomId: created.roomId,
+        playerId: created.playerId,
+        inviteUrl: `${config.PUBLIC_ORIGIN}/join/${created.inviteToken}`,
+      });
+    } catch (error) {
+      if (error instanceof Error && error.message === 'INSUFFICIENT_ACCOUNT_CHIPS') {
+        return reply
+          .code(409)
+          .send({ error: 'INSUFFICIENT_ACCOUNT_CHIPS', message: '账户筹码不足以创建牌局' });
+      }
+      throw error;
+    }
   });
 
   app.post(
@@ -186,7 +265,7 @@ export async function registerHttpRoutes(
         return reply.code(401).send({ error: 'INVALID_CREDENTIALS', message: '账号或密码错误' });
       const token = await repository.createAdminSession(admin.id);
       reply.setCookie(ADMIN_COOKIE, token, cookieOptions);
-      return { id: admin.id, username: admin.username };
+      return { id: admin.id, username: admin.username, displayName: admin.displayName };
     },
   );
 
@@ -201,9 +280,36 @@ export async function registerHttpRoutes(
     return admin ?? undefined;
   });
 
+  app.patch('/api/admin/profile', async (request, reply) => {
+    const admin = await requireAdmin(request, reply, repository);
+    if (!admin) return;
+    const parsed = updateAdminProfileSchema.safeParse(request.body ?? {});
+    if (!parsed.success) return sendValidationError(reply, parsed.error.issues);
+    try {
+      const updated = await repository.updateAdminProfile(admin.id, parsed.data);
+      if (!updated) {
+        return reply.code(401).send({ error: 'INVALID_CREDENTIALS', message: '当前密码不正确' });
+      }
+      if (updated.sessionToken) reply.setCookie(ADMIN_COOKIE, updated.sessionToken, cookieOptions);
+      await Promise.all(updated.roomIds.map((roomId) => rooms.refreshPlayers(roomId)));
+      return updated.admin;
+    } catch (error) {
+      if (error instanceof Error && error.message === 'INVALID_DISPLAY_NAME') {
+        return reply.code(400).send({ error: 'BAD_REQUEST', message: '昵称格式无效' });
+      }
+      throw error;
+    }
+  });
+
   app.get('/api/admin/users', async (request, reply) => {
     if (!(await requireAdmin(request, reply, repository))) return;
     return repository.listUserAccounts();
+  });
+
+  app.post('/api/admin/registration-invites', async (request, reply) => {
+    const admin = await requireAdmin(request, reply, repository);
+    if (!admin) return;
+    return repository.createRegistrationInvite({ adminId: admin.id });
   });
 
   app.post('/api/admin/users', async (request, reply) => {
@@ -232,14 +338,13 @@ export async function registerHttpRoutes(
     async (request, reply) => {
       const admin = await requireAdmin(request, reply, repository);
       if (!admin) return;
-      const parsed = resetUserPasswordSchema.safeParse(request.body);
+      const parsed = resetUserPasswordSchema.safeParse(request.body ?? {});
       if (!parsed.success) return sendValidationError(reply, parsed.error.issues);
-      if (
-        !(await repository.resetUserPassword(admin.id, request.params.id, parsed.data.password))
-      ) {
+      const reset = await repository.resetUserPassword(admin.id, request.params.id);
+      if (!reset) {
         return reply.code(404).send({ error: 'NOT_FOUND', message: '账号不存在' });
       }
-      return reply.code(204).send();
+      return { temporaryPassword: reset.password };
     },
   );
 
@@ -374,7 +479,6 @@ export async function registerHttpRoutes(
       const membership = await repository.addUserToRoom(
         request.params.id,
         parsed.data.userId,
-        parsed.data.nickname,
         'ADMIN',
         admin.id,
       );
@@ -386,6 +490,11 @@ export async function registerHttpRoutes(
       }
       if (error instanceof Error && error.message === 'ROOM_FULL') {
         return reply.code(409).send({ error: 'ROOM_FULL', message: '牌桌已满' });
+      }
+      if (error instanceof Error && error.message === 'INSUFFICIENT_ACCOUNT_CHIPS') {
+        return reply
+          .code(409)
+          .send({ error: 'INSUFFICIENT_ACCOUNT_CHIPS', message: '账户筹码不足以加入牌局' });
       }
       if (error instanceof Error && error.message === 'NICKNAME_TAKEN') {
         return reply.code(409).send({ error: 'NICKNAME_TAKEN', message: '昵称已被使用' });
@@ -404,49 +513,6 @@ export async function registerHttpRoutes(
       throw error;
     }
   });
-
-  app.post<{ Params: { id: string } }>(
-    '/api/admin/rooms/:id/play-as-self',
-    async (request, reply) => {
-      const admin = await requireAdmin(request, reply, repository);
-      if (!admin) return;
-      const parsed = adminPlayAsSelfSchema.safeParse(request.body ?? {});
-      if (!parsed.success) return sendValidationError(reply, parsed.error.issues);
-      const user = await repository.ensureAdminPlayerAccount(admin);
-      try {
-        const membership = await repository.addUserToRoom(
-          request.params.id,
-          user.id,
-          parsed.data.nickname,
-          'ADMIN',
-          admin.id,
-        );
-        await rooms.refreshPlayers(membership.roomId);
-        const token = await repository.createUserSession(user.id);
-        reply.setCookie(USER_COOKIE, token, cookieOptions);
-        return reply.code(201).send({ ...membership, user });
-      } catch (error) {
-        if (error instanceof Error && error.message === 'ROOM_NOT_FOUND') {
-          return reply.code(404).send({ error: 'NOT_FOUND', message: '牌桌不存在' });
-        }
-        if (error instanceof Error && error.message === 'ROOM_FULL') {
-          return reply.code(409).send({ error: 'ROOM_FULL', message: '牌桌已满' });
-        }
-        if (error instanceof Error && error.message === 'NICKNAME_TAKEN') {
-          return reply.code(409).send({ error: 'NICKNAME_TAKEN', message: '昵称已被使用' });
-        }
-        if (error instanceof Error && error.message === 'INVALID_NICKNAME') {
-          return reply.code(400).send({ error: 'BAD_REQUEST', message: '昵称格式无效' });
-        }
-        if (error instanceof Error && error.message === 'MEMBERSHIP_KICKED') {
-          return reply
-            .code(409)
-            .send({ error: 'MEMBERSHIP_KICKED', message: '该身份已被移出牌桌' });
-        }
-        throw error;
-      }
-    },
-  );
 
   app.post('/api/admin/rooms', async (request, reply) => {
     const admin = await requireAdmin(request, reply, repository);
@@ -513,18 +579,46 @@ export async function registerHttpRoutes(
     },
   );
 
+  app.get<{ Params: { id: string } }>('/api/rooms/:id/chips', async (request, reply) => {
+    const user = await requireUser(request, reply, repository);
+    if (!user) return;
+    const player = await repository.getPlayerForUser(user.id, request.params.id);
+    if (!player) return reply.code(403).send({ error: 'FORBIDDEN', message: '你不属于该牌桌' });
+    return repository.getChipLedger(request.params.id, user.id);
+  });
+
+  app.post<{ Params: { id: string; playerId: string } }>(
+    '/api/rooms/:id/players/:playerId/kick',
+    async (request, reply) => {
+      const user = await requireUser(request, reply, repository);
+      if (!user) return;
+      const owner = await repository.getPlayerForUser(user.id, request.params.id);
+      if (!owner) return reply.code(403).send({ error: 'FORBIDDEN', message: '你不属于该牌桌' });
+      const parsed = adminKickPlayerSchema.safeParse(request.body ?? {});
+      if (!parsed.success) return sendValidationError(reply, parsed.error.issues);
+      const result = await rooms.ownerKickPlayer(
+        request.params.id,
+        user.id,
+        request.params.playerId,
+        parsed.data.reason,
+        parsed.data.operationId ?? randomUUID(),
+      );
+      if (!result.ok) {
+        return reply
+          .code(result.code === 'NOT_FOUND' ? 404 : 409)
+          .send({ error: result.code, message: result.message });
+      }
+      return result;
+    },
+  );
+
   app.post<{ Params: { id: string } }>('/api/rooms/:id/enter', async (request, reply) => {
     const user = await requireUser(request, reply, repository);
     if (!user) return;
     const parsed = joinRoomSchema.safeParse(request.body ?? {});
     if (!parsed.success) return sendValidationError(reply, parsed.error.issues);
     try {
-      const joined = await repository.addUserToRoom(
-        request.params.id,
-        user.id,
-        parsed.data.nickname,
-        'SELF',
-      );
+      const joined = await repository.addUserToRoom(request.params.id, user.id, 'SELF');
       await rooms.refreshPlayers(joined.roomId);
       return reply.code(201).send(joined);
     } catch (error) {
@@ -533,6 +627,11 @@ export async function registerHttpRoutes(
       }
       if (error instanceof Error && error.message === 'ROOM_FULL') {
         return reply.code(409).send({ error: 'ROOM_FULL', message: '牌桌已满' });
+      }
+      if (error instanceof Error && error.message === 'INSUFFICIENT_ACCOUNT_CHIPS') {
+        return reply
+          .code(409)
+          .send({ error: 'INSUFFICIENT_ACCOUNT_CHIPS', message: '账户筹码不足以加入牌局' });
       }
       if (error instanceof Error && error.message === 'NICKNAME_TAKEN') {
         return reply.code(409).send({ error: 'NICKNAME_TAKEN', message: '桌上已有相同昵称' });
@@ -559,11 +658,7 @@ export async function registerHttpRoutes(
     const parsed = joinRoomSchema.safeParse(request.body ?? {});
     if (!parsed.success) return sendValidationError(reply, parsed.error.issues);
     try {
-      const joined = await repository.joinByInvite(
-        request.params.token,
-        user.id,
-        parsed.data.nickname,
-      );
+      const joined = await repository.joinByInvite(request.params.token, user.id);
       if (!joined)
         return reply.code(404).send({ error: 'INVITE_NOT_FOUND', message: '邀请无效或已过期' });
       await rooms.refreshPlayers(joined.roomId);
@@ -571,6 +666,11 @@ export async function registerHttpRoutes(
     } catch (error) {
       if (error instanceof Error && error.message === 'ROOM_FULL') {
         return reply.code(409).send({ error: 'ROOM_FULL', message: '牌桌已满' });
+      }
+      if (error instanceof Error && error.message === 'INSUFFICIENT_ACCOUNT_CHIPS') {
+        return reply
+          .code(409)
+          .send({ error: 'INSUFFICIENT_ACCOUNT_CHIPS', message: '账户筹码不足以加入牌局' });
       }
       if (error instanceof Error && error.message === 'NICKNAME_TAKEN') {
         return reply.code(409).send({ error: 'NICKNAME_TAKEN', message: '昵称已被使用' });

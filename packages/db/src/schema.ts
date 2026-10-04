@@ -46,6 +46,7 @@ const updatedAtColumn = () =>
 export const admins = pgTable('admins', {
   id: uuid('id').primaryKey().defaultRandom(),
   username: text('username').notNull().unique(),
+  displayName: text('display_name').notNull().default(''),
   passwordHash: text('password_hash').notNull(),
   createdAt: createdAtColumn(),
   updatedAt: updatedAtColumn(),
@@ -69,6 +70,7 @@ export const userAccounts = pgTable('user_accounts', {
   id: uuid('id').primaryKey().defaultRandom(),
   username: text('username').notNull().unique(),
   displayName: text('display_name').notNull(),
+  chipBalance: bigint('chip_balance', { mode: 'number' }).notNull().default(50_000),
   passwordHash: text('password_hash'),
   mustChangePassword: boolean('must_change_password').notNull().default(false),
   loginEnabled: boolean('login_enabled').notNull().default(true),
@@ -114,9 +116,12 @@ export const rooms = pgTable(
     lastOnlineAt: timestamp('last_online_at', { withTimezone: true }).notNull().defaultNow(),
     archivedAt: timestamp('archived_at', { withTimezone: true }),
     archiveReason: text('archive_reason'),
-    createdByAdminId: uuid('created_by_admin_id')
-      .notNull()
-      .references(() => admins.id, { onDelete: 'restrict' }),
+    createdByAdminId: uuid('created_by_admin_id').references(() => admins.id, {
+      onDelete: 'restrict',
+    }),
+    createdByUserId: uuid('created_by_user_id').references(() => userAccounts.id, {
+      onDelete: 'set null',
+    }),
     createdAt: createdAtColumn(),
     updatedAt: updatedAtColumn(),
   },
@@ -261,6 +266,50 @@ export const ledgerEntries = pgTable(
     index('ledger_room_seq_idx').on(table.roomId, table.seq),
     index('ledger_hand_idx').on(table.handId),
   ],
+);
+
+export const accountLedgerEntries = pgTable(
+  'account_ledger_entries',
+  {
+    id: uuid('id').primaryKey().defaultRandom(),
+    userId: uuid('user_id')
+      .notNull()
+      .references(() => userAccounts.id, { onDelete: 'cascade' }),
+    roomId: uuid('room_id').references(() => rooms.id, { onDelete: 'cascade' }),
+    playerId: uuid('player_id').references(() => players.id, { onDelete: 'set null' }),
+    kind: text('kind').notNull(),
+    delta: bigint('delta', { mode: 'number' }).notNull(),
+    balanceAfter: bigint('balance_after', { mode: 'number' }).notNull(),
+    metadata: jsonb('metadata')
+      .notNull()
+      .default(sql`'{}'::jsonb`),
+    createdAt: createdAtColumn(),
+  },
+  (table) => [
+    index('account_ledger_user_created_idx').on(table.userId, table.createdAt),
+    index('account_ledger_room_created_idx').on(table.roomId, table.createdAt),
+  ],
+);
+
+export const registrationInvites = pgTable(
+  'registration_invites',
+  {
+    id: uuid('id').primaryKey().defaultRandom(),
+    tokenHash: text('token_hash').notNull(),
+    createdByAdminId: uuid('created_by_admin_id').references(() => admins.id, {
+      onDelete: 'set null',
+    }),
+    createdByUserId: uuid('created_by_user_id').references(() => userAccounts.id, {
+      onDelete: 'set null',
+    }),
+    usedAt: timestamp('used_at', { withTimezone: true }),
+    usedByUserId: uuid('used_by_user_id').references(() => userAccounts.id, {
+      onDelete: 'set null',
+    }),
+    expiresAt: timestamp('expires_at', { withTimezone: true }),
+    createdAt: createdAtColumn(),
+  },
+  (table) => [uniqueIndex('registration_invites_token_hash_idx').on(table.tokenHash)],
 );
 
 export const commandResults = pgTable(

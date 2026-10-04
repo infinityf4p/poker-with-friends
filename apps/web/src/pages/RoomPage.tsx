@@ -1,6 +1,7 @@
 import { useEffect, useMemo, useState, type ReactNode } from 'react';
 import type {
   Card,
+  ChipLedgerResponse,
   HandHistoryItem,
   PlayerAction,
   PublicRoomProjection,
@@ -39,6 +40,12 @@ export function RoomPage({ roomId }: { roomId: string }) {
     'idle',
   );
   const [historyError, setHistoryError] = useState<string | null>(null);
+  const [chipLogOpen, setChipLogOpen] = useState(false);
+  const [chipLog, setChipLog] = useState<ChipLedgerResponse | null>(null);
+  const [chipLogStatus, setChipLogStatus] = useState<'idle' | 'loading' | 'ready' | 'error'>(
+    'idle',
+  );
+  const [chipLogError, setChipLogError] = useState<string | null>(null);
   const [winnerForm, setWinnerForm] = useState(false);
   const [claimingSeat, setClaimingSeat] = useState<number | null>(null);
   const [seconds, setSeconds] = useState(0);
@@ -87,7 +94,7 @@ export function RoomPage({ roomId }: { roomId: string }) {
     if (event === 'seat.claim') {
       const seat = typeof payload.seat === 'number' ? payload.seat + 1 : null;
       setNotice(seat ? `已选择 ${seat} 号位` : '座位已选择');
-    } else if (event === 'player.ready') setNotice('下一手已准备');
+    } else if (event === 'player.ready') setNotice('准备状态已更新');
     else if (event === 'player.sitOut') setNotice('下一手暂离');
     else if (event === 'stack.topUp') setNotice('筹码已补至牌桌上限');
     else if (event === 'hand.act') {
@@ -120,6 +127,20 @@ export function RoomPage({ roomId }: { roomId: string }) {
     } catch (caught) {
       setHistoryStatus('error');
       setHistoryError(caught instanceof Error ? caught.message : '牌谱加载失败');
+    }
+  };
+
+  const loadChipLog = async () => {
+    setChipLogOpen(true);
+    setChipLogStatus('loading');
+    setChipLogError(null);
+    try {
+      const result = await api<ChipLedgerResponse>(`/api/rooms/${roomId}/chips`);
+      setChipLog(result);
+      setChipLogStatus('ready');
+    } catch (caught) {
+      setChipLogStatus('error');
+      setChipLogError(caught instanceof Error ? caught.message : '筹码日志加载失败');
     }
   };
 
@@ -170,6 +191,20 @@ export function RoomPage({ roomId }: { roomId: string }) {
     : room.status === 'ACTIVE'
       ? '等待下一位玩家行动'
       : '等待下一手确认';
+  const isOwner = Boolean(me && room.ownerPlayerId === me.playerId);
+  const kickPlayer = async (playerId: string) => {
+    if (!isOwner || playerId === me?.playerId) return;
+    if (!window.confirm('确定要将这位玩家移出牌局吗？')) return;
+    try {
+      await api(`/api/rooms/${roomId}/players/${playerId}/kick`, {
+        method: 'POST',
+        body: JSON.stringify({ reason: '房主移出' }),
+      });
+      setNotice('玩家已移出牌局');
+    } catch (caught) {
+      setPageError(caught instanceof Error ? caught.message : '移出玩家失败');
+    }
+  };
 
   return (
     <main
@@ -190,6 +225,10 @@ export function RoomPage({ roomId }: { roomId: string }) {
           <button onClick={() => void loadHistory()}>
             <Icon name="history" size={18} />
             牌局记录
+          </button>
+          <button onClick={() => void loadChipLog()}>
+            <Icon name="chip" size={18} />
+            筹码日志
           </button>
         </nav>
         <div className="sidebar-table-details">
@@ -219,7 +258,11 @@ export function RoomPage({ roomId }: { roomId: string }) {
           </span>
           <span>
             <strong>{mySeat?.nickname ?? (publicView ? '旁观者' : '未入座')}</strong>
-            <small>{mySeat ? `${formatPoints(mySeat.stack)} 筹码` : 'Poker with Friends'}</small>
+            <small>
+              {mySeat
+                ? `${formatPoints(mySeat.stack)} 桌上筹码 · ${formatPoints(me?.accountChips ?? 0)} 账户`
+                : 'Poker with Friends'}
+            </small>
           </span>
         </div>
       </aside>
@@ -312,6 +355,8 @@ export function RoomPage({ roomId }: { roomId: string }) {
               canClaim={Boolean(me && !commandsDisabled && me.seat === null)}
               claimingSeat={claimingSeat}
               onClaim={(seat) => void claimSeat(seat)}
+              canKick={isOwner}
+              onKick={(playerId) => void kickPlayer(playerId)}
             />
           </section>
           <section className="operation-column">
@@ -449,6 +494,15 @@ export function RoomPage({ roomId }: { roomId: string }) {
           onClose={() => setHistoryOpen(false)}
         />
       )}
+      {chipLogOpen && (
+        <ChipLogDialog
+          data={chipLog}
+          status={chipLogStatus}
+          error={chipLogError}
+          onRetry={() => void loadChipLog()}
+          onClose={() => setChipLogOpen(false)}
+        />
+      )}
     </main>
   );
 }
@@ -461,6 +515,8 @@ function PokerTable({
   canClaim,
   claimingSeat,
   onClaim,
+  canKick,
+  onKick,
 }: {
   room: EnhancedRoomProjection;
   meId: string;
@@ -469,6 +525,8 @@ function PokerTable({
   canClaim: boolean;
   claimingSeat: number | null;
   onClaim: (seat: number) => void;
+  canKick: boolean;
+  onKick: (playerId: string) => void;
 }) {
   const totalPot = room.pots.reduce((sum, pot) => sum + pot.amount, 0);
   const positions = positionsForRoom(room);
@@ -534,6 +592,8 @@ function PokerTable({
           canClaim={canClaim}
           claiming={claimingSeat === seat.seat}
           onClaim={() => onClaim(seat.seat)}
+          canKick={canKick && seat.playerId !== meId}
+          onKick={() => seat.playerId && onKick(seat.playerId)}
         />
       ))}
     </section>
@@ -551,6 +611,8 @@ function Seat({
   canClaim,
   claiming,
   onClaim,
+  canKick,
+  onKick,
 }: {
   seat: EnhancedSeat;
   visualSeat: number;
@@ -562,6 +624,8 @@ function Seat({
   canClaim: boolean;
   claiming: boolean;
   onClaim: () => void;
+  canKick: boolean;
+  onKick: () => void;
 }) {
   if (!seat.playerId)
     return (
@@ -645,6 +709,11 @@ function Seat({
         <span>
           <Icon name="chip" size={12} /> {formatPoints(seat.stack)}
         </span>
+        {((seat.topUpTotal ?? 0) > 0 || (seat.lastTopUpAmount ?? 0) > 0) && (
+          <small className="seat-top-up">
+            补充 +{formatPoints(seat.lastTopUpAmount ?? seat.topUpTotal ?? 0)}
+          </small>
+        )}
         <small>{status}</small>
       </div>
       {positions.length > 0 && (
@@ -660,6 +729,16 @@ function Seat({
           <Icon name="chip" size={13} />
           <span>{formatPoints(seat.committedStreet)}</span>
         </div>
+      )}
+      {canKick && (
+        <button
+          type="button"
+          className="seat-kick-button"
+          onClick={onKick}
+          aria-label={`移出${seat.nickname}`}
+        >
+          <Icon name="close" size={12} />
+        </button>
       )}
     </div>
   );
@@ -908,9 +987,7 @@ export function ReadyConfirmation({
   busy: boolean;
   onReady: () => void;
 }) {
-  const eligible = room.seats.filter(
-    (seat) => seat.playerId && seat.connected && !seat.sittingOut && seat.stack > 0,
-  );
+  const eligible = room.seats.filter((seat) => seat.playerId && !seat.sittingOut && seat.stack > 0);
   const ready = room.readyCount ?? eligible.filter((seat) => seat.ready).length;
   const required = room.requiredReadyCount ?? eligible.length;
   return (
@@ -939,7 +1016,7 @@ export function ReadyConfirmation({
             <span className="mini-avatar">{seat.nickname?.slice(0, 1)}</span>
             <span>
               <strong>{seat.nickname}</strong>
-              <small>{seat.ready ? '已准备' : '未准备'}</small>
+              <small>{seat.ready ? '已准备' : seat.connected ? '未准备' : '等待重连'}</small>
             </span>
             <Icon name={seat.ready ? 'check' : 'clock'} size={17} />
           </li>
@@ -948,12 +1025,12 @@ export function ReadyConfirmation({
       {mySeat ? (
         <button
           className="primary-button ready-button"
-          disabled={busy || mySeat.ready || !mySeat.connected || mySeat.stack <= 0}
+          disabled={busy || !mySeat.connected || mySeat.stack <= 0}
           onClick={onReady}
         >
           <Icon name="check" size={18} />{' '}
           {mySeat.ready
-            ? '已准备'
+            ? '取消'
             : mySeat.sittingOut
               ? '返回并准备'
               : mySeat.stack <= 0
@@ -1383,6 +1460,105 @@ function HistoryDialog({
         >
           加载更多（{Math.min(20, items.length - visibleCount)} 手）
         </button>
+      )}
+    </Modal>
+  );
+}
+
+function ChipLogDialog({
+  data,
+  status,
+  error,
+  onRetry,
+  onClose,
+}: {
+  data: ChipLedgerResponse | null;
+  status: 'idle' | 'loading' | 'ready' | 'error';
+  error: string | null;
+  onRetry: () => void;
+  onClose: () => void;
+}) {
+  const entries = data?.account ?? [];
+  return (
+    <Modal title="筹码日志" onClose={onClose} className="chip-log-modal">
+      {status === 'loading' && (
+        <div className="history-state">
+          <span className="loader" />
+          <strong>正在加载日志…</strong>
+        </div>
+      )}
+      {status === 'error' && (
+        <div className="history-state history-state--error">
+          <ErrorBox>{error ?? '筹码日志加载失败'}</ErrorBox>
+          <button type="button" className="secondary-button" onClick={onRetry}>
+            重试
+          </button>
+        </div>
+      )}
+      {status === 'ready' && (
+        <div className="chip-log-list">
+          <section>
+            <header>
+              <strong>账户余额变动</strong>
+              <small>{entries.length} 条记录</small>
+            </header>
+            {entries.length === 0 ? (
+              <p className="empty-state">暂无记录</p>
+            ) : (
+              <ol>
+                {entries.map((entry) => (
+                  <li key={entry.id}>
+                    <span>
+                      <strong>
+                        {entry.kind === 'ACCOUNT_INITIAL_GRANT'
+                          ? '初始账户筹码'
+                          : entry.kind === 'ROOM_TOP_UP'
+                            ? '补充到牌桌'
+                            : entry.kind === 'ROOM_BUY_IN'
+                              ? '带入牌局'
+                              : entry.kind}
+                      </strong>
+                      <small>{new Date(entry.createdAt).toLocaleString()}</small>
+                    </span>
+                    <b className={entry.delta >= 0 ? 'positive' : 'negative'}>
+                      {entry.delta >= 0 ? '+' : ''}
+                      {formatPoints(entry.delta)}
+                    </b>
+                    <small>余额 {formatPoints(entry.balanceAfter)}</small>
+                  </li>
+                ))}
+              </ol>
+            )}
+          </section>
+          <section>
+            <header>
+              <strong>本桌筹码变动</strong>
+              <small>{data?.room.length ?? 0} 条记录</small>
+            </header>
+            <ol>
+              {(data?.room ?? []).map((entry) => (
+                <li key={entry.id}>
+                  <span>
+                    <strong>
+                      {entry.nickname ? `${entry.nickname} · ` : ''}
+                      {entry.kind === 'INITIAL_ALLOCATION'
+                        ? '初始带入'
+                        : entry.kind === 'TOP_UP'
+                          ? '补充筹码'
+                          : entry.kind}
+                    </strong>
+                    <small>{new Date(entry.createdAt).toLocaleString()}</small>
+                  </span>
+                  <b className={entry.delta >= 0 ? 'positive' : 'negative'}>
+                    {entry.delta >= 0 ? '+' : ''}
+                    {formatPoints(entry.delta)}
+                  </b>
+                  <small>桌上 {formatPoints(entry.balanceAfter)}</small>
+                </li>
+              ))}
+            </ol>
+          </section>
+        </div>
       )}
     </Modal>
   );

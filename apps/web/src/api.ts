@@ -2,6 +2,7 @@ import type {
   AdminRoomPlayerSummary,
   AdminRoomSummary,
   AdminUserSummary,
+  ChipLedgerResponse,
   LobbyRoomSummary,
   RoomMode,
   RoomSettings,
@@ -56,10 +57,12 @@ export async function api<T>(path: string, init: RequestInit = {}): Promise<T> {
 export interface AdminSession {
   id: string;
   username: string;
+  displayName?: string;
 }
 
 export interface CreateRoomResponse {
   roomId: string;
+  playerId?: string;
   inviteUrl: string;
 }
 
@@ -92,4 +95,5 @@ export type {
   LobbyRoomSummary,
   UserRoomSummary,
   UserSession,
+  ChipLedgerResponse,
 };

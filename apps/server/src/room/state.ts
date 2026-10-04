@@ -12,9 +12,13 @@ import type {
 
 export interface RuntimePlayer {
   id: string;
+  userId: string;
   nickname: string;
   seat: number | null;
   stack: number;
+  accountChips: number;
+  topUpTotal: number;
+  lastTopUpAmount: number;
   ready: boolean;
   connected: boolean;
   sittingOut: boolean;
@@ -66,6 +70,7 @@ export interface RuntimeRoomState {
   runtimeVersion: 1;
   roomId: string;
   name: string;
+  ownerUserId: string | null;
   settings: RoomSettings;
   status: RoomStatus;
   serverSeq: number;

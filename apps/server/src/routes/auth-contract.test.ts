@@ -5,7 +5,10 @@ import {
   changeUserPasswordSchema,
   createUserAccountSchema,
   joinRoomSchema,
+  registrationSchema,
   resetUserPasswordSchema,
+  updateAdminProfileSchema,
+  updateUserProfileSchema,
   userLoginSchema,
 } from '@poker-with-friends/protocol';
 import { describe, expect, it } from 'vitest';
@@ -20,7 +23,8 @@ describe('permanent user auth contract', () => {
         password: 'abc123',
       }).success,
     ).toBe(true);
-    expect(resetUserPasswordSchema.safeParse({ password: 'abc123' }).success).toBe(true);
+    expect(resetUserPasswordSchema.safeParse({}).success).toBe(true);
+    expect(resetUserPasswordSchema.safeParse({ password: 'abc123' }).success).toBe(false);
   });
 
   it('rejects invalid account names with the complete validation message', () => {
@@ -83,6 +87,22 @@ describe('permanent user auth contract', () => {
 
   it('allows invite joins to use the account display name by default', () => {
     expect(joinRoomSchema.parse({})).toEqual({});
+  });
+
+  it('requires an invite for registration and protects profile password changes', () => {
+    expect(
+      registrationSchema.safeParse({
+        inviteCode: 'a'.repeat(43),
+        username: 'player_1',
+        password: 'abc123',
+      }).success,
+    ).toBe(true);
+    expect(updateUserProfileSchema.safeParse({ displayName: '新昵称' }).success).toBe(true);
+    expect(updateAdminProfileSchema.safeParse({ newPassword: 'abc123' }).success).toBe(false);
+    expect(
+      updateUserProfileSchema.safeParse({ currentPassword: 'old-pass', newPassword: 'new-pass' })
+        .success,
+    ).toBe(true);
   });
 
   it('keeps optional password changes valid without affecting direct login', () => {
