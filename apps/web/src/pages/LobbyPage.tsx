@@ -251,8 +251,6 @@ export function LobbyPage() {
       <header className="lobby-header page-container">
         <Brand />
         <div className="account-actions">
-          <ThemeModeSelect />
-          <SkinModeSelect />
           <div className="account-pill">
             <span className="avatar">{session.displayName.slice(0, 1).toUpperCase()}</span>
             <span>
@@ -589,7 +587,6 @@ function UserLogin({
   return (
     <main className="login-page account-login">
       <section className="login-card account-login-card">
-        <ThemeModeSelect />
         <Brand />
         <div className="login-cards" aria-hidden="true">
           <PlayingCard card="As" />

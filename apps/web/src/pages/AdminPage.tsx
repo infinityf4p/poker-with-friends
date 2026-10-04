@@ -132,7 +132,6 @@ export function AdminPage() {
       <header className="dashboard-header page-container">
         <Brand />
         <div className="admin-header-actions">
-          <ThemeModeSelect />
           <button
             className="profile-button"
             aria-label={`编辑管理员资料 ${session.displayName ?? session.username}`}
@@ -412,7 +411,6 @@ function AdminLogin({
   return (
     <main className="login-page">
       <section className="login-card">
-        <ThemeModeSelect />
         <Brand />
         <div className="login-heading">
           <h1>管理员登录</h1>
@@ -476,6 +474,15 @@ function AdminProfileDialog({
   return (
     <Modal title="管理员账号设置" onClose={onClose} locked={pending}>
       {error && <ErrorBox onClose={() => setError(null)}>{error}</ErrorBox>}
+      <section className="settings-section">
+        <div className="settings-section__heading">
+          <strong>外观</strong>
+          <small>颜色模式会保存在当前设备。</small>
+        </div>
+        <div className="settings-controls">
+          <ThemeModeSelect />
+        </div>
+      </section>
       <form
         className="sheet-form"
         onSubmit={(event) => {

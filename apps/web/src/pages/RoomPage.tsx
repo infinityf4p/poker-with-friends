@@ -28,7 +28,6 @@ import { useRoom } from '../use-room';
 import { navigate } from '../navigation';
 import { Brand, ErrorBox, IconButton, Loading, Modal, ModeBadge } from '../components/ui';
 import { PlayingCard } from '../components/cards';
-import { SkinModeSelect, ThemeModeSelect } from '../theme';
 
 export function RoomPage({ roomId }: { roomId: string }) {
   const publicView = new URLSearchParams(window.location.search).get('view') === 'public';
@@ -288,8 +287,6 @@ export function RoomPage({ roomId }: { roomId: string }) {
             <span>第 {room.handNumber} 手</span>
           </div>
           <div className="table-tools">
-            <ThemeModeSelect />
-            <SkinModeSelect />
             <button
               className="table-history-trigger"
               aria-label="查看牌谱"

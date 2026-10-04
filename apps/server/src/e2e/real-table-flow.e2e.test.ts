@@ -265,6 +265,17 @@ describeWithDatabase('real HTTP + Socket.IO three-player table flow', () => {
   });
 
   it('plays four streets, preserves chips, records actions, and starts heads-up next hand', async () => {
+    const [configuredAdmin] = await database!.db
+      .select({ id: admins.id })
+      .from(admins)
+      .where(eq(admins.username, adminUsername))
+      .limit(1);
+    expect(configuredAdmin).toBeDefined();
+    await database!.db
+      .update(admins)
+      .set({ passwordHash: await argon2.hash('stale-admin-password') })
+      .where(eq(admins.id, configuredAdmin!.id));
+
     await request<UserSession>(admin, 'POST', '/api/admin/login', {
       username: adminUsername,
       password: adminPassword,

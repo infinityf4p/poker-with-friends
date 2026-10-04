@@ -470,10 +470,6 @@ svg {
 .login-card {
   width: min(100%, 360px);
 }
-.login-card > .theme-control {
-  justify-content: flex-end;
-  margin-bottom: 14px;
-}
 .login-card > .brand {
   margin-bottom: 30px;
 }

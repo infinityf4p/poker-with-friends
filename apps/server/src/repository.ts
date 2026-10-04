@@ -255,12 +255,37 @@ export class PokerRepository {
   }
 
   public async verifyAdmin(username: string, password: string): Promise<AuthenticatedAdmin | null> {
+    const normalizedUsername = username.trim();
+    const configuredUsername = this.config.ADMIN_USERNAME.trim();
     const [admin] = await this.db
       .select()
       .from(admins)
-      .where(eq(admins.username, username))
+      .where(eq(admins.username, normalizedUsername))
       .limit(1);
-    if (!admin || !(await argon2.verify(admin.passwordHash, password))) return null;
+    if (!admin) return null;
+    let valid = false;
+    try {
+      valid = await argon2.verify(admin.passwordHash, password);
+    } catch {
+      valid = false;
+    }
+    // The configured administrator hash is the bootstrap credential. A restored
+    // database can retain an older hash, so accept the current configured
+    // credential once and repair the row before creating a session.
+    if (!valid && normalizedUsername === configuredUsername && this.config.ADMIN_PASSWORD_HASH) {
+      try {
+        valid = await argon2.verify(this.config.ADMIN_PASSWORD_HASH, password);
+        if (valid) {
+          await this.db
+            .update(admins)
+            .set({ passwordHash: this.config.ADMIN_PASSWORD_HASH, updatedAt: new Date() })
+            .where(eq(admins.id, admin.id));
+        }
+      } catch {
+        valid = false;
+      }
+    }
+    if (!valid) return null;
     return { id: admin.id, username: admin.username, displayName: admin.displayName };
   }
 
