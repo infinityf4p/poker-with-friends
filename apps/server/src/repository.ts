@@ -1425,6 +1425,7 @@ export class PokerRepository {
         visibility: rooms.visibility,
       })
       .from(players)
+      .innerJoin(rooms, eq(players.roomId, rooms.id))
       .where(
         and(
           eq(players.userId, userId),
