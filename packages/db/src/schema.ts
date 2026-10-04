@@ -23,6 +23,7 @@ export const roomStatusEnum = pgEnum('room_status', [
   'DISPUTED',
   'ARCHIVED',
 ]);
+export const roomVisibilityEnum = pgEnum('room_visibility', ['PUBLIC', 'PRIVATE']);
 export const membershipStatusEnum = pgEnum('membership_status', [
   'ACTIVE',
   'KICK_PENDING',
@@ -106,6 +107,8 @@ export const rooms = pgTable(
     name: text('name').notNull(),
     mode: roomModeEnum('mode').notNull(),
     status: roomStatusEnum('status').notNull().default('LOBBY'),
+    visibility: roomVisibilityEnum('visibility').notNull().default('PUBLIC'),
+    accessPasswordHash: text('access_password_hash'),
     settings: jsonb('settings').notNull(),
     settingsLocked: boolean('settings_locked').notNull().default(false),
     serverSeq: bigint('server_seq', { mode: 'number' }).notNull().default(0),
@@ -229,6 +232,22 @@ export const roomEvents = pgTable(
     index('room_events_hand_idx').on(table.handId),
     index('room_events_retention_idx').on(table.createdAt),
   ],
+);
+
+export const roomChatMessages = pgTable(
+  'room_chat_messages',
+  {
+    id: uuid('id').primaryKey().defaultRandom(),
+    roomId: uuid('room_id')
+      .notNull()
+      .references(() => rooms.id, { onDelete: 'cascade' }),
+    playerId: uuid('player_id')
+      .notNull()
+      .references(() => players.id, { onDelete: 'cascade' }),
+    text: text('text').notNull(),
+    createdAt: createdAtColumn(),
+  },
+  (table) => [index('room_chat_messages_room_created_idx').on(table.roomId, table.createdAt)],
 );
 
 export const privateSnapshots = pgTable('private_snapshots', {

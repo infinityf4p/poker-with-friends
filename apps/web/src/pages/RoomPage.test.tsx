@@ -117,6 +117,8 @@ beforeEach(() => {
     clearError: vi.fn(),
     send: vi.fn(async () => true),
     refresh: vi.fn(async () => {}),
+    chat: [],
+    sendChat: vi.fn(async () => true),
   };
   mocks.connection = connection;
   container = document.createElement('div');

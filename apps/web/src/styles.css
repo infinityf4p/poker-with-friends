@@ -4431,6 +4431,17 @@ svg {
   --amber: #e9c26e;
   --gold: #e9c26e;
   --shadow: 0 14px 40px rgb(0 0 0 / 24%);
+  --surface-strong: #22342d;
+  --surface-hover: #263d34;
+  --field-bg: #101b17;
+  --overlay: rgb(4 10 8 / 78%);
+}
+
+:root[data-theme='light'] {
+  --surface-strong: #ffffff;
+  --surface-hover: #f0f5f2;
+  --field-bg: #ffffff;
+  --overlay: rgb(20 32 28 / 38%);
 }
 
 html[data-theme='dark'],
@@ -4558,6 +4569,142 @@ html[data-theme='dark'] .chip-log-list li {
   background: var(--surface);
 }
 
+/* Complete dark-surface pass. Components below intentionally use semantic
+   tokens so newly added dialogs, settings and chat controls inherit the same
+   contrast instead of leaking the light palette. */
+html[data-theme='dark'] {
+  color: var(--text);
+}
+html[data-theme='dark'] .real-modal,
+html[data-theme='dark'] .modal-card,
+html[data-theme='dark'] .dialog,
+html[data-theme='dark'] .popover,
+html[data-theme='dark'] .dropdown-menu,
+html[data-theme='dark'] .settings-panel,
+html[data-theme='dark'] .chat-panel,
+html[data-theme='dark'] .history-panel,
+html[data-theme='dark'] .admin-panel,
+html[data-theme='dark'] .profile-panel {
+  color: var(--text);
+  background: var(--surface);
+  border-color: var(--line);
+  box-shadow: var(--shadow);
+}
+html[data-theme='dark'] .sheet-backdrop,
+html[data-theme='dark'] .modal-backdrop,
+html[data-theme='dark'] .dialog-backdrop {
+  background: var(--overlay);
+}
+html[data-theme='dark'] input,
+html[data-theme='dark'] textarea,
+html[data-theme='dark'] select,
+html[data-theme='dark'] .field input,
+html[data-theme='dark'] .field textarea,
+html[data-theme='dark'] .field select,
+html[data-theme='dark'] .chat-input {
+  color: var(--text);
+  background: var(--field-bg);
+  border-color: var(--line-strong);
+}
+html[data-theme='dark'] input::placeholder,
+html[data-theme='dark'] textarea::placeholder {
+  color: var(--quiet);
+}
+html[data-theme='dark'] table,
+html[data-theme='dark'] th,
+html[data-theme='dark'] td,
+html[data-theme='dark'] .admin-table,
+html[data-theme='dark'] .history-table,
+html[data-theme='dark'] .data-table {
+  color: var(--text);
+  border-color: var(--line);
+}
+html[data-theme='dark'] th,
+html[data-theme='dark'] .admin-table thead,
+html[data-theme='dark'] .history-table thead {
+  background: var(--surface-strong);
+  color: var(--muted);
+}
+html[data-theme='dark'] tr:nth-child(even),
+html[data-theme='dark'] .admin-table tbody tr:nth-child(even),
+html[data-theme='dark'] .history-table tbody tr:nth-child(even) {
+  background: rgb(255 255 255 / 2%);
+}
+html[data-theme='dark'] .secondary-button,
+html[data-theme='dark'] .danger-button,
+html[data-theme='dark'] .icon-button,
+html[data-theme='dark'] .text-button,
+html[data-theme='dark'] button:not(.primary-button) {
+  color: var(--text);
+}
+html[data-theme='dark'] .secondary-button:hover,
+html[data-theme='dark'] .danger-button:hover,
+html[data-theme='dark'] .icon-button:hover,
+html[data-theme='dark'] .text-button:hover,
+html[data-theme='dark'] button:not(.primary-button):hover {
+  background: var(--surface-hover);
+}
+html[data-theme='dark'] .lobby-page,
+html[data-theme='dark'] .dashboard-page,
+html[data-theme='dark'] .login-page,
+html[data-theme='dark'] .state-page,
+html[data-theme='dark'] .invite-page,
+html[data-theme='dark'] .join-page,
+html[data-theme='dark'] .admin-page {
+  color: var(--text);
+  background: var(--bg);
+}
+html[data-theme='dark'] .login-card,
+html[data-theme='dark'] .invite-card,
+html[data-theme='dark'] .join-form,
+html[data-theme='dark'] .lobby-room-card,
+html[data-theme='dark'] .room-card,
+html[data-theme='dark'] .admin-card,
+html[data-theme='dark'] .operation-panel,
+html[data-theme='dark'] .waiting-panel-real,
+html[data-theme='dark'] .ready-panel,
+html[data-theme='dark'] .online-panel,
+html[data-theme='dark'] .table-settings-list,
+html[data-theme='dark'] .quick-actions,
+html[data-theme='dark'] .proposal-card,
+html[data-theme='dark'] .chat-message,
+html[data-theme='dark'] .chat-composer,
+html[data-theme='dark'] .emoji-picker {
+  color: var(--text);
+  background: var(--surface);
+  border-color: var(--line);
+}
+html[data-theme='dark'] .sidebar-nav,
+html[data-theme='dark'] .sidebar-account,
+html[data-theme='dark'] .table-sidebar,
+html[data-theme='dark'] .table-header,
+html[data-theme='dark'] .table-footer,
+html[data-theme='dark'] .mobile-action-dock {
+  color: var(--text);
+  background: var(--bg-elevated);
+  border-color: var(--line);
+}
+html[data-theme='dark'] .room-membership-copy,
+html[data-theme='dark'] .form-hint,
+html[data-theme='dark'] .table-header-meta,
+html[data-theme='dark'] .table-title small,
+html[data-theme='dark'] .muted,
+html[data-theme='dark'] small {
+  color: var(--muted);
+}
+html[data-theme='dark'] hr,
+html[data-theme='dark'] .divider {
+  border-color: var(--line);
+}
+html[data-theme='dark'] .playing-card {
+  background: #f7faf8;
+  color: #17201c;
+  border-color: #d6e1db;
+}
+html[data-theme='dark'] .playing-card--red {
+  color: #d83f50;
+}
+
 @media (max-width: 640px) {
   .lobby-heading {
     align-items: flex-start;
@@ -4575,4 +4722,215 @@ html[data-theme='dark'] .chip-log-list li {
   .chip-log-list li > small {
     grid-column: 1 / -1;
   }
+}
+
+/* Table and card skins */
+:root {
+  --table-felt-skin: var(--felt);
+  --table-border-skin: #dfe7e2;
+  --card-face-skin: #ffffff;
+  --card-ink-skin: #202522;
+  --card-red-skin: #c54551;
+}
+:root[data-skin='classic'] {
+  --table-felt-skin: var(--felt);
+  --table-border-skin: #dfe7e2;
+  --card-face-skin: #fff;
+  --card-ink-skin: #202522;
+  --card-red-skin: #c33d49;
+}
+:root[data-skin='emerald'] {
+  --table-felt-skin: radial-gradient(circle at 50% 42%, #1e6b51, #0b3b2e 72%);
+  --table-border-skin: #3f9e78;
+  --card-face-skin: #f8fff9;
+  --card-ink-skin: #102d22;
+  --card-red-skin: #d94c5b;
+}
+:root[data-skin='midnight'] {
+  --table-felt-skin: radial-gradient(circle at 50% 40%, #253457, #11182d 76%);
+  --table-border-skin: #455682;
+  --card-face-skin: #eef2ff;
+  --card-ink-skin: #17213e;
+  --card-red-skin: #ff6e83;
+}
+:root[data-skin='sunset'] {
+  --table-felt-skin: linear-gradient(145deg, #7e3441, #d06b4c 48%, #44306d);
+  --table-border-skin: #db8b73;
+  --card-face-skin: #fff9f2;
+  --card-ink-skin: #392426;
+  --card-red-skin: #c8444d;
+}
+:root[data-skin='neon'] {
+  --table-felt-skin: radial-gradient(circle at 50% 45%, #18283f, #090e1b 78%);
+  --table-border-skin: #33e7d0;
+  --card-face-skin: #f2fffe;
+  --card-ink-skin: #102b31;
+  --card-red-skin: #f64f9a;
+}
+:root[data-theme='dark'][data-skin='classic'] {
+  --card-face-skin: #202622;
+  --card-ink-skin: #edf5ef;
+  --table-border-skin: #3a4840;
+}
+.felt-table {
+  background: var(--table-felt-skin);
+  border-color: var(--table-border-skin);
+}
+.playing-card {
+  background: var(--card-face-skin);
+  color: var(--card-ink-skin);
+  border-color: color-mix(in srgb, var(--table-border-skin), #000 12%);
+}
+.playing-card--red {
+  color: var(--card-red-skin);
+}
+.card-placeholder {
+  border-color: var(--table-border-skin);
+}
+
+.settings-section {
+  display: grid;
+  gap: 12px;
+  padding: 14px 0;
+  border-top: 1px solid var(--line);
+}
+.settings-section:first-of-type {
+  border-top: 0;
+  padding-top: 0;
+}
+.settings-section__heading {
+  display: grid;
+  gap: 3px;
+}
+.settings-section__heading strong {
+  color: var(--text);
+  font-size: 14px;
+}
+.settings-section__heading small,
+.settings-muted {
+  color: var(--muted);
+  font-size: 12px;
+}
+.settings-controls {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 10px;
+}
+.settings-room-list {
+  display: grid;
+  gap: 8px;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+.settings-room-list li {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 10px 12px;
+  border: 1px solid var(--line);
+  border-radius: 12px;
+  background: var(--surface);
+}
+.settings-room-list li > span {
+  min-width: 0;
+  display: grid;
+  gap: 3px;
+}
+.settings-room-list li strong {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.settings-room-list li small {
+  color: var(--muted);
+  font-size: 11px;
+}
+.room-visibility-badge {
+  color: var(--muted);
+  font-size: 11px;
+  padding: 2px 6px;
+  border: 1px solid var(--line);
+  border-radius: 999px;
+}
+
+.chat-panel {
+  margin-top: 12px;
+  border: 1px solid var(--line);
+  border-radius: 16px;
+  background: var(--surface);
+  padding: 12px;
+}
+.chat-panel header {
+  display: flex;
+  justify-content: space-between;
+  color: var(--text);
+  margin-bottom: 8px;
+}
+.chat-panel header small {
+  color: var(--quiet);
+}
+.chat-messages {
+  max-height: 150px;
+  min-height: 46px;
+  overflow: auto;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+.chat-messages p {
+  margin: 0;
+  display: flex;
+  gap: 7px;
+  font-size: 12px;
+  color: var(--text);
+}
+.chat-messages p b {
+  color: var(--accent);
+  font-weight: 600;
+}
+.chat-empty {
+  color: var(--quiet);
+  font-size: 12px;
+  padding: 12px 0;
+  text-align: center;
+}
+.chat-emoji {
+  display: flex;
+  gap: 3px;
+  margin: 8px 0;
+  overflow: auto;
+}
+.chat-emoji button {
+  border: 0;
+  background: transparent;
+  cursor: pointer;
+  border-radius: 7px;
+  padding: 3px;
+  font-size: 16px;
+}
+.chat-emoji button:hover {
+  background: var(--soft);
+}
+.chat-panel form {
+  display: flex;
+  gap: 6px;
+}
+.chat-panel input {
+  min-width: 0;
+  flex: 1;
+  border: 1px solid var(--line);
+  border-radius: 9px;
+  background: var(--bg);
+  color: var(--text);
+  padding: 8px 10px;
+}
+.chat-panel form button {
+  border: 0;
+  border-radius: 9px;
+  background: var(--accent);
+  color: #fff;
+  padding: 0 13px;
+  cursor: pointer;
 }

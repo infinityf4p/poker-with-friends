@@ -117,6 +117,37 @@ export function registerSocketServer(app: FastifyInstance, deps: SocketDependenc
       return;
     }
 
+    socket.on(
+      'chat.send',
+      (input: unknown, ack?: (result: { ok: boolean; message?: string }) => void) => {
+        const text =
+          typeof (input as { text?: unknown })?.text === 'string'
+            ? (input as { text: string }).text.trim().slice(0, 120)
+            : '';
+        if (!text) {
+          ack?.({ ok: false, message: '消息不能为空' });
+          return;
+        }
+        void deps.repository
+          .appendChatMessage(roomId, playerId, text)
+          .then((message) => {
+            if (!message) {
+              ack?.({ ok: false, message: '你不在该牌局' });
+              return;
+            }
+            io.to(`room:${roomId}`).emit('chat.message', message);
+            ack?.({ ok: true });
+          })
+          .catch(() => ack?.({ ok: false, message: '发送失败' }));
+      },
+    );
+    socket.on('chat.history', (ack?: (messages: unknown[]) => void) => {
+      void deps.repository
+        .listChatMessages(roomId)
+        .then((messages) => ack?.(messages))
+        .catch(() => ack?.([]));
+    });
+
     let commandsInFlight = 0;
     const command = <T>(
       event: string,

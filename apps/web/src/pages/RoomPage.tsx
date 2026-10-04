@@ -28,7 +28,7 @@ import { useRoom } from '../use-room';
 import { navigate } from '../navigation';
 import { Brand, ErrorBox, IconButton, Loading, Modal, ModeBadge } from '../components/ui';
 import { PlayingCard } from '../components/cards';
-import { ThemeModeSelect } from '../theme';
+import { SkinModeSelect, ThemeModeSelect } from '../theme';
 
 export function RoomPage({ roomId }: { roomId: string }) {
   const publicView = new URLSearchParams(window.location.search).get('view') === 'public';
@@ -53,7 +53,7 @@ export function RoomPage({ roomId }: { roomId: string }) {
   const [peeking, setPeeking] = useState(false);
   const [settingsOpen, setSettingsOpen] = useState(false);
   const [motion, setMotion] = useState(true);
-  const { room, me } = connection;
+  const { room, me, chat, sendChat } = connection;
 
   useEffect(() => {
     setPeeking(false);
@@ -289,6 +289,7 @@ export function RoomPage({ roomId }: { roomId: string }) {
           </div>
           <div className="table-tools">
             <ThemeModeSelect />
+            <SkinModeSelect />
             <button
               className="table-history-trigger"
               aria-label="查看牌谱"
@@ -413,6 +414,9 @@ export function RoomPage({ roomId }: { roomId: string }) {
                 />
               )}
             </fieldset>
+            {!publicView && (
+              <ChatPanel messages={chat ?? []} onSend={sendChat ?? (async () => false)} />
+            )}
           </section>
         </div>
         {me && mySeat && (
@@ -1563,5 +1567,62 @@ function ChipLogDialog({
         </div>
       )}
     </Modal>
+  );
+}
+
+function ChatPanel({
+  messages,
+  onSend,
+}: {
+  messages: { id: string; nickname: string; text: string; createdAt: string }[];
+  onSend: (text: string) => Promise<boolean>;
+}) {
+  const [text, setText] = useState('');
+  const emojis = ['😀', '😂', '👏', '👍', '🎉', '😅', '🤔', '💰', '🔥', '❤️'];
+  return (
+    <section className="chat-panel" aria-label="聊天室">
+      <header>
+        <strong>聊天室</strong>
+        <small>{messages.length}/100</small>
+      </header>
+      <div className="chat-messages">
+        {messages.length === 0 ? (
+          <span className="chat-empty">和牌友打个招呼吧</span>
+        ) : (
+          messages.map((m) => (
+            <p key={m.id}>
+              <b>{m.nickname}</b>
+              <span>{m.text}</span>
+            </p>
+          ))
+        )}
+      </div>
+      <div className="chat-emoji">
+        {emojis.map((emoji) => (
+          <button type="button" key={emoji} onClick={() => setText((value) => value + emoji)}>
+            {emoji}
+          </button>
+        ))}
+      </div>
+      <form
+        onSubmit={(event) => {
+          event.preventDefault();
+          const value = text.trim();
+          if (!value) return;
+          void onSend(value).then((ok) => {
+            if (ok) setText('');
+          });
+        }}
+      >
+        <input
+          aria-label="聊天消息"
+          value={text}
+          maxLength={120}
+          onChange={(event) => setText(event.target.value)}
+          placeholder="发送消息…"
+        />
+        <button type="submit">发送</button>
+      </form>
+    </section>
   );
 }

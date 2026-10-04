@@ -233,13 +233,27 @@ export async function registerHttpRoutes(
     return repository.listLobbyRooms(user.id);
   });
 
+  app.get<{ Params: { id: string } }>('/api/rooms/:id/chat', async (request, reply) => {
+    const user = await requireUser(request, reply, repository);
+    if (!user) return;
+    const player = await repository.getPlayerForUser(user.id, request.params.id);
+    if (!player) return reply.code(403).send({ error: 'FORBIDDEN', message: '你不属于该牌桌' });
+    return repository.listChatMessages(request.params.id);
+  });
+
   app.post('/api/rooms', async (request, reply) => {
     const user = await requireUser(request, reply, repository);
     if (!user) return;
     const parsed = createRoomSchema.safeParse(request.body);
     if (!parsed.success) return sendValidationError(reply, parsed.error.issues);
     try {
-      const created = await repository.createUserRoom(user, parsed.data.name, parsed.data.settings);
+      const created = await repository.createUserRoom(
+        user,
+        parsed.data.name,
+        parsed.data.settings,
+        parsed.data.visibility,
+        parsed.data.password,
+      );
       return reply.code(201).send({
         roomId: created.roomId,
         playerId: created.playerId,
@@ -558,7 +572,13 @@ export async function registerHttpRoutes(
     if (!admin) return;
     const parsed = createRoomSchema.safeParse(request.body);
     if (!parsed.success) return sendValidationError(reply, parsed.error.issues);
-    const created = await repository.createRoom(admin, parsed.data.name, parsed.data.settings);
+    const created = await repository.createRoom(
+      admin,
+      parsed.data.name,
+      parsed.data.settings,
+      parsed.data.visibility,
+      parsed.data.password,
+    );
     return reply.code(201).send({
       roomId: created.roomId,
       inviteUrl: `${config.PUBLIC_ORIGIN}/join/${created.inviteToken}`,
@@ -657,7 +677,14 @@ export async function registerHttpRoutes(
     const parsed = joinRoomSchema.safeParse(request.body ?? {});
     if (!parsed.success) return sendValidationError(reply, parsed.error.issues);
     try {
-      const joined = await repository.addUserToRoom(request.params.id, user.id, 'SELF');
+      const joined = await repository.addUserToRoom(
+        request.params.id,
+        user.id,
+        'SELF',
+        undefined,
+        undefined,
+        parsed.data.password,
+      );
       await rooms.refreshPlayers(joined.roomId);
       return reply.code(201).send(joined);
     } catch (error) {
@@ -666,6 +693,11 @@ export async function registerHttpRoutes(
       }
       if (error instanceof Error && error.message === 'ROOM_FULL') {
         return reply.code(409).send({ error: 'ROOM_FULL', message: '牌桌已满' });
+      }
+      if (error instanceof Error && error.message === 'PRIVATE_ROOM_PASSWORD_REQUIRED') {
+        return reply
+          .code(403)
+          .send({ error: 'PRIVATE_ROOM_PASSWORD_REQUIRED', message: '私有牌局需要正确的牌局密码' });
       }
       if (error instanceof Error && error.message === 'INSUFFICIENT_ACCOUNT_CHIPS') {
         return reply

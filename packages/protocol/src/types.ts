@@ -1,4 +1,5 @@
 export type RoomMode = 'ONLINE' | 'LIVE';
+export type RoomVisibility = 'PUBLIC' | 'PRIVATE';
 
 export type RoomStatus = 'LOBBY' | 'ACTIVE' | 'BETWEEN_HANDS' | 'DISPUTED' | 'ARCHIVED';
 export type MembershipStatus = 'ACTIVE' | 'KICK_PENDING' | 'KICKED';
@@ -106,6 +107,14 @@ export interface PublicRoomProjection {
   updatedAt: string;
 }
 
+export interface ChatMessage {
+  id: string;
+  playerId: string;
+  nickname: string;
+  text: string;
+  createdAt: string;
+}
+
 export interface PrivatePlayerProjection {
   playerId: string;
   roomId: string;
@@ -162,6 +171,7 @@ export interface AdminRoomSummary {
   id: string;
   name: string;
   mode: RoomMode;
+  visibility?: RoomVisibility;
   status: RoomStatus;
   playerCount: number;
   handNumber: number;
@@ -188,6 +198,7 @@ export interface UserRoomSummary {
   seat: number | null;
   stack: number;
   membershipStatus: MembershipStatus;
+  visibility?: RoomVisibility;
 }
 
 export interface LobbyRoomPlayerSummary {
@@ -213,6 +224,7 @@ export interface LobbyRoomSummary {
     stack: number;
     status: MembershipStatus;
   } | null;
+  visibility?: RoomVisibility;
 }
 
 export interface AdminUserSummary extends UserSession {

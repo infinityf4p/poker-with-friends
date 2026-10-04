@@ -8,6 +8,14 @@ import type {
 } from '@poker-with-friends/protocol';
 import { api } from './api';
 
+export interface ChatMessage {
+  id: string;
+  playerId: string;
+  nickname: string;
+  text: string;
+  createdAt: string;
+}
+
 export interface RoomConnection {
   room: PublicRoomProjection | null;
   me: PrivatePlayerProjection | null;
@@ -22,6 +30,8 @@ export interface RoomConnection {
     options?: { needsTurnToken?: boolean },
   ) => Promise<boolean>;
   refresh: () => Promise<void>;
+  chat?: ChatMessage[];
+  sendChat?: (text: string) => Promise<boolean>;
 }
 
 function commandErrorMessage(code: string, message: string): string {
@@ -39,6 +49,7 @@ export function useRoom(roomId: string, adminView = false): RoomConnection {
   const [busy, setBusy] = useState(false);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
+  const [chat, setChat] = useState<ChatMessage[]>([]);
   const socketRef = useRef<Socket | null>(null);
   const pendingRef = useRef(false);
   const revokedRef = useRef(false);
@@ -89,6 +100,13 @@ export function useRoom(roomId: string, adminView = false): RoomConnection {
       if (!isCurrent()) return;
       const applied = applySnapshot(snapshot);
       if (adminView && applied) setConnected(true);
+      if (!adminView && applied) {
+        void api<unknown[]>(`/api/rooms/${roomId}/chat`)
+          .then((messages) => {
+            if (isCurrent() && Array.isArray(messages)) setChat(messages as ChatMessage[]);
+          })
+          .catch(() => undefined);
+      }
     } catch (caught) {
       if (!isCurrent()) return;
       if (adminView) setConnected(false);
@@ -113,6 +131,7 @@ export function useRoom(roomId: string, adminView = false): RoomConnection {
     setBusy(false);
     setLoading(true);
     setError(null);
+    setChat([]);
     void refresh();
     if (adminView) {
       const poll = window.setInterval(() => void refresh(), 2_000);
@@ -177,6 +196,15 @@ export function useRoom(roomId: string, adminView = false): RoomConnection {
       if (!isCurrent() || next.roomId !== roomId) return;
       meRef.current = next;
       setMe(next);
+    });
+    socket.on('chat.message', (message: ChatMessage) => {
+      if (isCurrent())
+        setChat((items) =>
+          [...items.filter((item) => item.id !== message.id), message].slice(-100),
+        );
+    });
+    socket.on('chat.history', (messages: ChatMessage[]) => {
+      if (isCurrent()) setChat(messages.slice(-100));
     });
     socket.on('room.error', (next: { message?: string }) => {
       if (isCurrent()) setError(next.message ?? '牌桌已暂停');
@@ -283,6 +311,18 @@ export function useRoom(roomId: string, adminView = false): RoomConnection {
     [adminView, applySnapshot, refresh, roomId],
   );
 
+  const sendChat = useCallback(async (text: string): Promise<boolean> => {
+    const socket = socketRef.current;
+    if (!socket?.connected || !text.trim()) return false;
+    return new Promise((resolve) =>
+      socket
+        .timeout(5_000)
+        .emit('chat.send', { text }, (err: Error | null, result?: { ok?: boolean }) =>
+          resolve(!err && result?.ok === true),
+        ),
+    );
+  }, []);
+
   return {
     room,
     me,
@@ -293,5 +333,7 @@ export function useRoom(roomId: string, adminView = false): RoomConnection {
     clearError: () => setError(null),
     send,
     refresh,
+    chat,
+    sendChat,
   };
 }

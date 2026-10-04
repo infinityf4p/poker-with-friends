@@ -56,4 +56,12 @@ describe('theme and notice presentation', () => {
     expect(css).toMatch(/html\[data-theme='dark'\] \.table-page/);
     expect(css).toMatch(/\.table-notice-wrap\s*\{[\s\S]*?position:\s*relative/);
   });
+
+  it('defines dark surfaces for every shared overlay and form primitive', () => {
+    expect(css).toMatch(/html\[data-theme='dark'\] \.real-modal/);
+    expect(css).toMatch(/html\[data-theme='dark'\] \.field input/);
+    expect(css).toMatch(/html\[data-theme='dark'\] \.admin-table/);
+    expect(css).toMatch(/html\[data-theme='dark'\] \.chat-panel/);
+    expect(css).toMatch(/--surface-strong:\s*#/);
+  });
 });

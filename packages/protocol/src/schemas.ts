@@ -160,9 +160,11 @@ export const adminRestorePlayerSchema = z.object({ operationId: identifierSchema
 export const createRoomSchema = z.object({
   name: z.string().trim().min(1).max(48),
   settings: roomSettingsSchema,
+  visibility: z.enum(['PUBLIC', 'PRIVATE']).default('PUBLIC'),
+  password: z.string().min(4).max(128).optional(),
 });
 
-export const joinRoomSchema = z.object({});
+export const joinRoomSchema = z.object({ password: z.string().max(128).optional() });
 
 export const commandBaseSchema = z.object({
   commandId: identifierSchema,

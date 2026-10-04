@@ -9,6 +9,7 @@ import {
   type CreateRoomResponse,
   type JoinResponse,
   type LobbyRoomSummary,
+  type UserRoomSummary,
   type UserSession,
 } from '../api';
 import { Icon } from '../icons';
@@ -16,7 +17,7 @@ import { formatPoints, statusLabel } from '../poker-ui';
 import { navigate } from '../navigation';
 import { Brand, ErrorBox, IconButton, Loading, Modal, ModeBadge } from '../components/ui';
 import { PlayingCard } from '../components/cards';
-import { ThemeModeSelect } from '../theme';
+import { SkinModeSelect, ThemeModeSelect } from '../theme';
 
 export function LobbyPage() {
   const [session, setSession] = useState<UserSession | null>(null);
@@ -122,6 +123,12 @@ export function LobbyPage() {
       setError('牌桌已满');
       return;
     }
+    let accessPassword: string | undefined;
+    if (room.visibility === 'PRIVATE') {
+      accessPassword =
+        window.prompt('请输入私有牌局密码，或使用房主分享的邀请链接加入') ?? undefined;
+      if (!accessPassword) return;
+    }
     joiningRef.current = true;
     const generation = sessionGeneration.current;
     const isCurrent = () => mountedRef.current && generation === sessionGeneration.current;
@@ -130,7 +137,7 @@ export function LobbyPage() {
     try {
       const joined = await api<JoinResponse>(`/api/rooms/${room.roomId}/enter`, {
         method: 'POST',
-        body: JSON.stringify({}),
+        body: JSON.stringify(accessPassword ? { password: accessPassword } : {}),
       });
       if (isCurrent()) navigate(`/room/${joined.roomId}`);
     } catch (caught) {
@@ -245,6 +252,7 @@ export function LobbyPage() {
         <Brand />
         <div className="account-actions">
           <ThemeModeSelect />
+          <SkinModeSelect />
           <div className="account-pill">
             <span className="avatar">{session.displayName.slice(0, 1).toUpperCase()}</span>
             <span>
@@ -265,7 +273,7 @@ export function LobbyPage() {
             className="text-button account-profile-button"
             onClick={() => setProfileOpen(true)}
           >
-            账号设置
+            设置
           </button>
           <button
             type="button"
@@ -390,9 +398,6 @@ export function LobbyPage() {
             )}
           </div>
         </section>
-        <button type="button" className="admin-entry" onClick={() => navigate('/admin')}>
-          <Icon name="table" size={16} /> 管理员入口
-        </button>
       </div>
       {createOpen && (
         <CreateRoomDialog
@@ -403,13 +408,18 @@ export function LobbyPage() {
             setCreateOpen(false);
             setCreateError(null);
           }}
-          onSubmit={async (name, settings) => {
+          onSubmit={async (name, settings, visibility, password) => {
             setCreating(true);
             setCreateError(null);
             try {
               const created = await api<CreateRoomResponse>('/api/rooms', {
                 method: 'POST',
-                body: JSON.stringify({ name, settings }),
+                body: JSON.stringify({
+                  name,
+                  settings,
+                  visibility,
+                  ...(password ? { password } : {}),
+                }),
               });
               navigate(`/room/${created.roomId}`);
             } catch (caught) {
@@ -469,6 +479,9 @@ function LobbyRoomCard({
         </span>
         <span className="lobby-room-title">
           <ModeBadge mode={room.mode} />
+          <small className="room-visibility-badge">
+            {room.visibility === 'PRIVATE' ? '私有' : '公开'}
+          </small>
           <h3>{room.name}</h3>
         </span>
         <span className={`room-live-state ${room.status === 'ACTIVE' ? 'is-playing' : ''}`}>
@@ -694,9 +707,6 @@ function UserLogin({
         >
           {mode === 'login' ? '使用邀请码注册' : '已有账号，返回登录'}
         </button>
-        <button type="button" className="text-button" onClick={() => navigate('/admin')}>
-          管理员入口
-        </button>
       </section>
     </main>
   );
@@ -716,15 +726,75 @@ function UserProfileDialog({
   const [newPassword, setNewPassword] = useState('');
   const [pending, setPending] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [rooms, setRooms] = useState<UserRoomSummary[]>([]);
+  const [roomsLoading, setRoomsLoading] = useState(true);
   const passwordChange = newPassword.length > 0;
   const valid =
     displayName.trim().length > 0 &&
     displayName.trim().length <= 20 &&
     (!currentPassword || (passwordChange && newPassword.length >= 6)) &&
     (!passwordChange || currentPassword.length > 0);
+  useEffect(() => {
+    let active = true;
+    void api<UserRoomSummary[]>('/api/me/rooms')
+      .then((items) => {
+        if (active) setRooms(items);
+      })
+      .catch(() => undefined)
+      .finally(() => {
+        if (active) setRoomsLoading(false);
+      });
+    return () => {
+      active = false;
+    };
+  }, []);
   return (
-    <Modal title="账号设置" onClose={onClose} locked={pending}>
+    <Modal title="设置" onClose={onClose} locked={pending}>
       {error && <ErrorBox onClose={() => setError(null)}>{error}</ErrorBox>}
+      <section className="settings-section">
+        <div className="settings-section__heading">
+          <strong>外观</strong>
+          <small>颜色会跟随浏览器主题，也可以手动固定。</small>
+        </div>
+        <div className="settings-controls">
+          <ThemeModeSelect />
+          <SkinModeSelect />
+        </div>
+      </section>
+      <section className="settings-section">
+        <div className="settings-section__heading">
+          <strong>参加过的牌局</strong>
+          <small>从这里查看最近加入的牌局，进入后可查看牌局记录。</small>
+        </div>
+        {roomsLoading ? (
+          <p className="settings-muted">正在加载记录…</p>
+        ) : rooms.length === 0 ? (
+          <p className="settings-muted">还没有参加过牌局。</p>
+        ) : (
+          <ul className="settings-room-list">
+            {rooms.slice(0, 8).map((room) => (
+              <li key={room.roomId}>
+                <span>
+                  <strong>{room.name}</strong>
+                  <small>
+                    {statusLabel[room.status] ?? room.status} · {formatPoints(room.stack)} 桌上筹码
+                  </small>
+                </span>
+                <button
+                  type="button"
+                  className="text-button"
+                  onClick={() => {
+                    onClose();
+                    navigate(`/room/${room.roomId}`);
+                  }}
+                >
+                  进入
+                </button>
+              </li>
+            ))}
+          </ul>
+        )}
+      </section>
       <form
         className="sheet-form"
         onSubmit={(event) => {
@@ -794,12 +864,19 @@ function CreateRoomDialog({
   pending: boolean;
   error: string | null;
   onClose: () => void;
-  onSubmit: (name: string, settings: RoomSettings) => Promise<void>;
+  onSubmit: (
+    name: string,
+    settings: RoomSettings,
+    visibility: 'PUBLIC' | 'PRIVATE',
+    password?: string,
+  ) => Promise<void>;
 }) {
   const [name, setName] = useState('朋友牌局');
   const [mode, setMode] = useState<RoomMode>('ONLINE');
+  const [visibility, setVisibility] = useState<'PUBLIC' | 'PRIVATE'>('PUBLIC');
+  const [password, setPassword] = useState('');
   const [submitted, setSubmitted] = useState(false);
-  const valid = name.trim().length > 0;
+  const valid = name.trim().length > 0 && (visibility === 'PUBLIC' || password.length >= 4);
   return (
     <Modal title="创建牌局" onClose={onClose} locked={pending} className="create-room-modal">
       <form
@@ -808,7 +885,12 @@ function CreateRoomDialog({
           event.preventDefault();
           setSubmitted(true);
           if (!valid) return;
-          void onSubmit(name.trim(), { ...DEFAULT_ROOM_SETTINGS, mode });
+          void onSubmit(
+            name.trim(),
+            { ...DEFAULT_ROOM_SETTINGS, mode },
+            visibility,
+            password || undefined,
+          );
         }}
       >
         {error && <ErrorBox>{error}</ErrorBox>}
@@ -833,6 +915,40 @@ function CreateRoomDialog({
             <span>线下牌桌</span>
           </label>
         </fieldset>
+        <fieldset className="mode-choice">
+          <legend>访问权限</legend>
+          <label>
+            <input
+              type="radio"
+              checked={visibility === 'PUBLIC'}
+              onChange={() => setVisibility('PUBLIC')}
+            />{' '}
+            <span>公开（大厅可直接加入）</span>
+          </label>
+          <label>
+            <input
+              type="radio"
+              checked={visibility === 'PRIVATE'}
+              onChange={() => setVisibility('PRIVATE')}
+            />{' '}
+            <span>私有（邀请链接或密码）</span>
+          </label>
+        </fieldset>
+        {visibility === 'PRIVATE' && (
+          <label className="field">
+            <span>牌局密码（至少 4 位）</span>
+            <input
+              type="password"
+              value={password}
+              onChange={(event) => setPassword(event.target.value)}
+              minLength={4}
+              maxLength={128}
+            />
+            {password.length > 0 && password.length < 4 && (
+              <small className="field-error">密码至少需要 4 位</small>
+            )}
+          </label>
+        )}
         <p className="form-hint">每位玩家初始带入 5,000 筹码，房主创建后会自动加入 1 号位。</p>
         <button
           type="submit"

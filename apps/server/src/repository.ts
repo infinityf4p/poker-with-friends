@@ -13,6 +13,7 @@ import {
   players,
   privateSnapshots,
   roomEvents,
+  roomChatMessages,
   roomInvites,
   registrationInvites,
   rooms,
@@ -34,9 +35,11 @@ import type {
   PublicRoomProjection,
   RoomSettings,
   RoomStatus,
+  RoomVisibility,
   UserRoomSummary,
   UserSession,
   ChipLedgerResponse,
+  ChatMessage,
 } from '@poker-with-friends/protocol';
 import { and, asc, desc, eq, gt, inArray, isNull, lt, ne, sql } from 'drizzle-orm';
 import type { AppConfig } from './config.js';
@@ -851,6 +854,8 @@ export class PokerRepository {
     admin: AuthenticatedAdmin,
     name: string,
     settings: RoomSettings,
+    visibility: RoomVisibility = 'PUBLIC',
+    password?: string,
   ): Promise<{ roomId: string; inviteToken: string }> {
     const roomId = randomUUID();
     const inviteToken = randomToken();
@@ -910,6 +915,9 @@ export class PokerRepository {
         id: roomId,
         name,
         mode: settings.mode,
+        visibility,
+        accessPasswordHash:
+          visibility === 'PRIVATE' && password ? await argon2.hash(password) : null,
         settings,
         createdByAdminId: admin.id,
         createdByUserId: null,
@@ -934,6 +942,8 @@ export class PokerRepository {
     user: AuthenticatedUser,
     name: string,
     settings: RoomSettings,
+    visibility: RoomVisibility = 'PUBLIC',
+    password?: string,
   ): Promise<{ roomId: string; inviteToken: string; playerId: string }> {
     const roomId = randomUUID();
     const inviteToken = randomToken();
@@ -1006,6 +1016,9 @@ export class PokerRepository {
         id: roomId,
         name,
         mode: settings.mode,
+        visibility,
+        accessPasswordHash:
+          visibility === 'PRIVATE' && password ? await argon2.hash(password) : null,
         settings,
         createdByAdminId: null,
         createdByUserId: user.id,
@@ -1062,6 +1075,7 @@ export class PokerRepository {
         id: rooms.id,
         name: rooms.name,
         mode: rooms.mode,
+        visibility: rooms.visibility,
         status: rooms.status,
         handNumber: rooms.handNumber,
         createdAt: rooms.createdAt,
@@ -1086,6 +1100,7 @@ export class PokerRepository {
       id: row.id,
       name: row.name,
       mode: row.mode,
+      visibility: row.visibility,
       status: row.status,
       playerCount: row.playerCount,
       handNumber: row.handNumber,
@@ -1162,6 +1177,7 @@ export class PokerRepository {
     source: 'INVITE' | 'ADMIN' | 'SELF',
     adminId?: string,
     inviteTokenHash?: string,
+    accessPassword?: string,
   ): Promise<{ roomId: string; playerId: string }> {
     try {
       return await this.db.transaction(async (tx) => {
@@ -1171,6 +1187,13 @@ export class PokerRepository {
         );
         const [room] = await tx.select().from(rooms).where(eq(rooms.id, roomId)).limit(1);
         if (!room || room.status === 'ARCHIVED') throw new Error('ROOM_NOT_FOUND');
+        if (
+          source === 'SELF' &&
+          room.visibility === 'PRIVATE' &&
+          !(await this.checkRoomPassword(room.accessPasswordHash, accessPassword))
+        ) {
+          throw new Error('PRIVATE_ROOM_PASSWORD_REQUIRED');
+        }
         if (source === 'INVITE') {
           const [activeInvite] = inviteTokenHash
             ? await tx
@@ -1283,6 +1306,15 @@ export class PokerRepository {
     }
   }
 
+  private async checkRoomPassword(hash: string | null, password?: string): Promise<boolean> {
+    if (!hash || !password) return false;
+    try {
+      return await argon2.verify(hash, password);
+    } catch {
+      return false;
+    }
+  }
+
   public async invitePreview(inviteToken: string): Promise<{
     roomId: string;
     name: string;
@@ -1329,6 +1361,54 @@ export class PokerRepository {
     };
   }
 
+  public async appendChatMessage(
+    roomId: string,
+    playerId: string,
+    text: string,
+  ): Promise<ChatMessage | null> {
+    const [player] = await this.db
+      .select({ nickname: players.nickname })
+      .from(players)
+      .where(
+        and(
+          eq(players.id, playerId),
+          eq(players.roomId, roomId),
+          ne(players.membershipStatus, 'KICKED'),
+        ),
+      )
+      .limit(1);
+    if (!player) return null;
+    const [row] = await this.db
+      .insert(roomChatMessages)
+      .values({ roomId, playerId, text })
+      .returning({ id: roomChatMessages.id, createdAt: roomChatMessages.createdAt });
+    if (!row) return null;
+    return {
+      id: row.id,
+      playerId,
+      nickname: player.nickname,
+      text,
+      createdAt: row.createdAt.toISOString(),
+    };
+  }
+
+  public async listChatMessages(roomId: string, limit = 100): Promise<ChatMessage[]> {
+    const rows = await this.db
+      .select({
+        id: roomChatMessages.id,
+        playerId: roomChatMessages.playerId,
+        nickname: players.nickname,
+        text: roomChatMessages.text,
+        createdAt: roomChatMessages.createdAt,
+      })
+      .from(roomChatMessages)
+      .innerJoin(players, eq(players.id, roomChatMessages.playerId))
+      .where(eq(roomChatMessages.roomId, roomId))
+      .orderBy(desc(roomChatMessages.createdAt))
+      .limit(Math.max(1, Math.min(100, limit)));
+    return rows.reverse().map((row) => ({ ...row, createdAt: row.createdAt.toISOString() }));
+  }
+
   public async getPlayerForUser(
     userId: string,
     roomId: string,
@@ -1342,6 +1422,7 @@ export class PokerRepository {
         nickname: players.nickname,
         seat: players.seat,
         membershipStatus: players.membershipStatus,
+        visibility: rooms.visibility,
       })
       .from(players)
       .where(
@@ -1383,6 +1464,7 @@ export class PokerRepository {
         seat: players.seat,
         stack: players.stack,
         membershipStatus: players.membershipStatus,
+        visibility: rooms.visibility,
       })
       .from(players)
       .innerJoin(rooms, eq(players.roomId, rooms.id))
@@ -1401,6 +1483,7 @@ export class PokerRepository {
         handNumber: rooms.handNumber,
         settings: rooms.settings,
         updatedAt: rooms.updatedAt,
+        visibility: rooms.visibility,
       })
       .from(rooms)
       .where(ne(rooms.status, 'ARCHIVED'))
@@ -1424,36 +1507,46 @@ export class PokerRepository {
       .where(inArray(players.roomId, roomIds))
       .orderBy(asc(players.createdAt));
 
-    return roomRows.map((room) => {
-      const settings = room.settings as RoomSettings;
-      const roomPlayers = playerRows.filter((player) => player.roomId === room.roomId);
-      const activePlayers = roomPlayers.filter((player) => player.membershipStatus !== 'KICKED');
-      const ownMembership = roomPlayers.find((player) => player.userId === userId) ?? null;
-      return {
-        roomId: room.roomId,
-        name: room.name,
-        mode: room.mode,
-        status: room.status,
-        handNumber: room.handNumber,
-        settings,
-        playerCount: activePlayers.length,
-        availableSeats: Math.max(0, settings.maxPlayers - activePlayers.length),
-        players: activePlayers.map((player) => ({
-          nickname: player.nickname,
-          seat: player.seat,
-          connected: player.connected,
-        })),
-        membership: ownMembership
-          ? {
-              playerId: ownMembership.playerId,
-              nickname: ownMembership.nickname,
-              seat: ownMembership.seat,
-              stack: ownMembership.stack,
-              status: ownMembership.membershipStatus,
-            }
-          : null,
-      };
-    });
+    return roomRows
+      .filter(
+        (room) =>
+          room.visibility === 'PUBLIC' ||
+          playerRows.some(
+            (p) =>
+              p.roomId === room.roomId && p.userId === userId && p.membershipStatus !== 'KICKED',
+          ),
+      )
+      .map((room) => {
+        const settings = room.settings as RoomSettings;
+        const roomPlayers = playerRows.filter((player) => player.roomId === room.roomId);
+        const activePlayers = roomPlayers.filter((player) => player.membershipStatus !== 'KICKED');
+        const ownMembership = roomPlayers.find((player) => player.userId === userId) ?? null;
+        return {
+          roomId: room.roomId,
+          name: room.name,
+          mode: room.mode,
+          status: room.status,
+          handNumber: room.handNumber,
+          settings,
+          playerCount: activePlayers.length,
+          availableSeats: Math.max(0, settings.maxPlayers - activePlayers.length),
+          players: activePlayers.map((player) => ({
+            nickname: player.nickname,
+            seat: player.seat,
+            connected: player.connected,
+          })),
+          membership: ownMembership
+            ? {
+                playerId: ownMembership.playerId,
+                nickname: ownMembership.nickname,
+                seat: ownMembership.seat,
+                stack: ownMembership.stack,
+                status: ownMembership.membershipStatus,
+              }
+            : null,
+          visibility: room.visibility,
+        };
+      });
   }
 
   public async listRoomPlayers(roomId: string): Promise<AdminRoomPlayerSummary[]> {

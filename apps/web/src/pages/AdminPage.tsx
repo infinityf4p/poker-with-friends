@@ -248,6 +248,9 @@ export function AdminPage() {
               <article className="room-card" key={room.id}>
                 <div className="room-card-top">
                   <ModeBadge mode={room.mode} />
+                  <span className="status-pill">
+                    {room.visibility === 'PRIVATE' ? '私有' : '公开'}
+                  </span>
                   <span className={`status-pill status-pill--${room.status.toLowerCase()}`}>
                     {statusLabel[room.status] ?? room.status}
                   </span>
@@ -1270,6 +1273,8 @@ function CreateRoomDialog({
   const [bigBlind, setBigBlind] = useState(20);
   const [stack, setStack] = useState(5_000);
   const [timeout, setTimeoutValue] = useState(30);
+  const [visibility, setVisibility] = useState<'PUBLIC' | 'PRIVATE'>('PUBLIC');
+  const [password, setPassword] = useState('');
   const [pending, setPending] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const valid =
@@ -1278,7 +1283,8 @@ function CreateRoomDialog({
     bigBlind >= smallBlind &&
     stack >= bigBlind * 20 &&
     timeout >= 10 &&
-    timeout <= 180;
+    timeout <= 180 &&
+    (visibility === 'PUBLIC' || password.length >= 4);
   const submit = (event: FormEvent) => {
     event.preventDefault();
     if (!valid || pending) return;
@@ -1297,6 +1303,8 @@ function CreateRoomDialog({
         nextHandCountdownSeconds: 5,
         maxPlayers: 6,
       },
+      visibility,
+      ...(password ? { password } : {}),
     })
       .catch((caught) => setError(caught instanceof Error ? caught.message : '创建牌桌失败'))
       .finally(() => setPending(false));
@@ -1384,6 +1392,37 @@ function CreateRoomDialog({
             />
           </label>
         </div>
+        <fieldset className="mode-choice">
+          <legend>访问权限</legend>
+          <label>
+            <input
+              type="radio"
+              checked={visibility === 'PUBLIC'}
+              onChange={() => setVisibility('PUBLIC')}
+            />
+            公开（大厅可加入）
+          </label>
+          <label>
+            <input
+              type="radio"
+              checked={visibility === 'PRIVATE'}
+              onChange={() => setVisibility('PRIVATE')}
+            />
+            私有（邀请链接或密码）
+          </label>
+        </fieldset>
+        {visibility === 'PRIVATE' && (
+          <label className="field">
+            <span>牌局密码（至少 4 位）</span>
+            <input
+              type="password"
+              minLength={4}
+              maxLength={128}
+              value={password}
+              onChange={(event) => setPassword(event.target.value)}
+            />
+          </label>
+        )}
         <button className="primary-button" disabled={!valid || pending}>
           {pending ? '正在创建…' : '创建牌桌'}
         </button>
