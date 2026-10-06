@@ -1,4 +1,6 @@
-const CACHE_NAME = 'poker-with-friends-shell-v1';
+// Bump the shell cache when the login bundle or session behavior changes. This
+// forces Chromium to activate the new worker instead of serving an old shell.
+const CACHE_NAME = 'poker-with-friends-shell-v2';
 const SHELL = ['/', '/index.html', '/manifest.webmanifest', '/icon.svg'];
 
 function isCacheableResponse(request, response) {

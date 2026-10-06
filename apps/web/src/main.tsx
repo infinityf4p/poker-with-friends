@@ -13,8 +13,10 @@ ReactDOM.createRoot(document.getElementById('root')!).render(
 
 if ('serviceWorker' in navigator && import.meta.env.PROD) {
   window.addEventListener('load', () => {
-    navigator.serviceWorker.register('/pwa-worker.js', { updateViaCache: 'none' }).catch(() => {
-      // The app remains fully usable when service-worker registration is unavailable.
-    });
+    navigator.serviceWorker
+      .register('/pwa-worker.js?rev=2', { updateViaCache: 'none' })
+      .catch(() => {
+        // The app remains fully usable when service-worker registration is unavailable.
+      });
   });
 }

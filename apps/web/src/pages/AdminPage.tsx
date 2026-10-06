@@ -427,18 +427,23 @@ function AdminLogin({
           <label className="field">
             <span>账号</span>
             <input
+              name="username"
               value={username}
               onChange={(event) => setUsername(event.target.value)}
-              autoComplete="username"
+              autoComplete="section-admin-login username"
+              autoCapitalize="none"
+              autoCorrect="off"
+              spellCheck={false}
             />
           </label>
           <label className="field">
             <span>密码</span>
             <input
+              name="password"
               type="password"
               value={password}
               onChange={(event) => setPassword(event.target.value)}
-              autoComplete="current-password"
+              autoComplete="section-admin-login current-password"
               autoFocus
             />
           </label>

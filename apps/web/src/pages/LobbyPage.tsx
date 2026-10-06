@@ -621,9 +621,13 @@ function UserLogin({
             <span>
               <Icon name="user" size={18} />
               <input
+                name="username"
                 value={username}
                 onChange={(event) => setUsername(event.target.value)}
-                autoComplete="username"
+                autoComplete={`${mode === 'login' ? 'section-player-login' : 'section-player-register'} username`}
+                autoCapitalize="none"
+                autoCorrect="off"
+                spellCheck={false}
                 autoFocus
                 disabled={pending}
                 required
@@ -640,6 +644,7 @@ function UserLogin({
               <span>
                 <Icon name="key" size={18} />
                 <input
+                  name="inviteCode"
                   value={inviteCode}
                   onChange={(event) => setInviteCode(event.target.value)}
                   autoComplete="one-time-code"
@@ -654,10 +659,15 @@ function UserLogin({
             <span>
               <Icon name="lock" size={18} />
               <input
+                name="password"
                 type={passwordVisible ? 'text' : 'password'}
                 value={password}
                 onChange={(event) => setPassword(event.target.value)}
-                autoComplete="current-password"
+                autoComplete={
+                  mode === 'login'
+                    ? 'section-player-login current-password'
+                    : 'section-player-register new-password'
+                }
                 disabled={pending}
                 required
                 minLength={mode === 'register' ? 6 : 1}
