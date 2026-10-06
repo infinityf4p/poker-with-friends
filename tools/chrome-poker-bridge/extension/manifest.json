@@ -1,0 +1,14 @@
+{
+  "manifest_version": 3,
+  "name": "Poker 本地诊断桥",
+  "version": "0.1.0",
+  "description": "只读取 Poker with Friends 当前标签页的可见诊断信息，并发送到本机桥接器。",
+  "permissions": ["activeTab", "scripting"],
+  "host_permissions": ["https://poker.infinityf4p.com/*", "http://127.0.0.1:44191/*"],
+  "action": {
+    "default_popup": "popup.html"
+  },
+  "content_security_policy": {
+    "extension_pages": "script-src 'self'; object-src 'self'"
+  }
+}

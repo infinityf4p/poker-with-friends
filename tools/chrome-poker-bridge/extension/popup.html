@@ -1,0 +1,52 @@
+<!doctype html>
+<html lang="zh-CN">
+  <head>
+    <meta charset="utf-8" />
+    <title>Poker 诊断</title>
+    <style>
+      body {
+        font:
+          14px -apple-system,
+          BlinkMacSystemFont,
+          sans-serif;
+        width: 280px;
+        margin: 0;
+        padding: 16px;
+        color: #17202a;
+      }
+      h1 {
+        font-size: 16px;
+        margin: 0 0 8px;
+      }
+      p {
+        color: #5f6b78;
+        line-height: 1.45;
+      }
+      button {
+        width: 100%;
+        border: 0;
+        border-radius: 9px;
+        padding: 10px;
+        background: #1769e0;
+        color: white;
+        font-weight: 600;
+        cursor: pointer;
+      }
+      button:disabled {
+        opacity: 0.6;
+      }
+      #status {
+        margin-top: 10px;
+        white-space: pre-wrap;
+        line-height: 1.45;
+      }
+    </style>
+  </head>
+  <body>
+    <h1>Poker 本地诊断</h1>
+    <p>只读取当前 Poker 标签页的可见文字，不读取密码、Cookie 或表单值。</p>
+    <button id="inspect">读取当前标签页</button>
+    <div id="status" role="status"></div>
+    <script src="popup.js"></script>
+  </body>
+</html>

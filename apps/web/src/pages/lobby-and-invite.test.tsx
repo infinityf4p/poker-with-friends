@@ -191,6 +191,79 @@ describe('lobby room selection', () => {
   });
 });
 
+describe('administrator sign-in recovery', () => {
+  it('tries the admin endpoint only after an unauthorized player login and redirects to admin', async () => {
+    request.mockImplementation((path: string) => {
+      if (path === '/api/auth/session') return Promise.reject(new Error('no player session'));
+      if (path === '/api/auth/login')
+        return Promise.reject({ status: 401, message: '账号或密码错误' });
+      if (path === '/api/admin/login')
+        return Promise.resolve({ id: 'admin-id', username: 'admin', displayName: '管理员' });
+      throw new Error(`Unexpected request: ${path}`);
+    });
+
+    await act(async () => root.render(<LobbyPage />));
+    const setInput = (name: string, value: string) => {
+      const input = container.querySelector<HTMLInputElement>(`input[name="${name}"]`)!;
+      const setter = Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, 'value')!.set!;
+      setter.call(input, value);
+      input.dispatchEvent(new Event('input', { bubbles: true }));
+    };
+    await act(async () => {
+      setInput('username', 'admin');
+      setInput('password', 'secret-password');
+    });
+
+    await act(async () => {
+      container
+        .querySelector('form')!
+        .dispatchEvent(new Event('submit', { bubbles: true, cancelable: true }));
+      await Promise.resolve();
+    });
+
+    expect(request.mock.calls.map(([path]) => path)).toEqual([
+      '/api/auth/session',
+      '/api/auth/login',
+      '/api/admin/login',
+    ]);
+    expect(navigate).toHaveBeenCalledWith('/admin');
+    expect(container.textContent).not.toContain('secret-password');
+  });
+
+  it('does not call the admin endpoint for non-401 player login failures', async () => {
+    request.mockImplementation((path: string) => {
+      if (path === '/api/auth/session') return Promise.reject(new Error('no player session'));
+      if (path === '/api/auth/login')
+        return Promise.reject({ status: 429, message: '请求过于频繁' });
+      throw new Error(`Unexpected request: ${path}`);
+    });
+
+    await act(async () => root.render(<LobbyPage />));
+    const setInput = (name: string, value: string) => {
+      const input = container.querySelector<HTMLInputElement>(`input[name="${name}"]`)!;
+      const setter = Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, 'value')!.set!;
+      setter.call(input, value);
+      input.dispatchEvent(new Event('input', { bubbles: true }));
+    };
+    await act(async () => {
+      setInput('username', 'player');
+      setInput('password', 'secret-password');
+    });
+    await act(async () => {
+      container
+        .querySelector('form')!
+        .dispatchEvent(new Event('submit', { bubbles: true, cancelable: true }));
+      await Promise.resolve();
+    });
+
+    expect(request.mock.calls.map(([path]) => path)).toEqual([
+      '/api/auth/session',
+      '/api/auth/login',
+    ]);
+    expect(navigate).not.toHaveBeenCalled();
+  });
+});
+
 describe('invitation request lifecycle', () => {
   it('ignores a previous invitation response after the token changes', async () => {
     const oldPreview = deferred<InvitePreview>();

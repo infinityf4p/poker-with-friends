@@ -217,6 +217,30 @@ export function LobbyPage() {
               setError(caught instanceof Error ? caught.message : '牌桌列表加载失败'),
             );
           } catch (caught) {
+            // The administrator has a separate cookie and login endpoint. A
+            // failed player login is the only safe point to try that endpoint,
+            // so the root login form can also be used for the admin account
+            // without exposing a second login entry in the UI.
+            if (isUnauthorizedError(caught)) {
+              try {
+                await api('/api/admin/login', {
+                  method: 'POST',
+                  body: JSON.stringify({ username, password }),
+                });
+                if (mountedRef.current && generation === sessionGeneration.current) {
+                  setError(null);
+                  navigate('/admin');
+                }
+                return;
+              } catch (adminCaught) {
+                // Keep the normal credential error for a failed fallback. A
+                // rate-limit or server error is still surfaced to the user.
+                if (mountedRef.current && generation === sessionGeneration.current) {
+                  setError(adminCaught instanceof Error ? adminCaught.message : '登录失败');
+                }
+                return;
+              }
+            }
             if (mountedRef.current && generation === sessionGeneration.current) {
               setError(caught instanceof Error ? caught.message : '登录失败');
             }
@@ -565,6 +589,15 @@ function LobbyRoomCard({
         </button>
       </footer>
     </article>
+  );
+}
+
+function isUnauthorizedError(error: unknown): boolean {
+  return (
+    typeof error === 'object' &&
+    error !== null &&
+    'status' in error &&
+    (error as { status?: unknown }).status === 401
   );
 }
 
