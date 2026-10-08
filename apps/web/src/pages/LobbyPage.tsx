@@ -762,7 +762,6 @@ function UserProfileDialog({
   onSaved: (user: UserSession) => void;
 }) {
   const [displayName, setDisplayName] = useState(user.displayName);
-  const [currentPassword, setCurrentPassword] = useState('');
   const [newPassword, setNewPassword] = useState('');
   const [pending, setPending] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -772,8 +771,7 @@ function UserProfileDialog({
   const valid =
     displayName.trim().length > 0 &&
     displayName.trim().length <= 20 &&
-    (!currentPassword || (passwordChange && newPassword.length >= 6)) &&
-    (!passwordChange || currentPassword.length > 0);
+    (!passwordChange || (newPassword.length >= 6 && newPassword.length <= 256));
   useEffect(() => {
     let active = true;
     void api<UserRoomSummary[]>('/api/me/rooms')
@@ -845,7 +843,7 @@ function UserProfileDialog({
             method: 'PATCH',
             body: JSON.stringify({
               displayName: displayName.trim(),
-              ...(passwordChange ? { currentPassword, newPassword } : {}),
+              ...(passwordChange ? { newPassword } : {}),
             }),
           })
             .then(onSaved)
@@ -866,15 +864,6 @@ function UserProfileDialog({
           ) : null}
         </label>
         <label className="field">
-          <span>当前密码（修改密码时填写）</span>
-          <input
-            type="password"
-            value={currentPassword}
-            onChange={(event) => setCurrentPassword(event.target.value)}
-            autoComplete="current-password"
-          />
-        </label>
-        <label className="field">
           <span>新密码（可选）</span>
           <input
             type="password"
@@ -882,6 +871,7 @@ function UserProfileDialog({
             onChange={(event) => setNewPassword(event.target.value)}
             autoComplete="new-password"
             minLength={6}
+            maxLength={256}
           />
           {newPassword.length > 0 && newPassword.length < 6 && (
             <small className="field-error">密码至少需要 6 位。</small>

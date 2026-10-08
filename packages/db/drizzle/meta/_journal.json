@@ -71,6 +71,13 @@
       "when": 1784044000000,
       "tag": "0009_room_chat_messages",
       "breakpoints": true
+    },
+    {
+      "idx": 10,
+      "version": "7",
+      "when": 1791446400000,
+      "tag": "0010_account_lifecycle",
+      "breakpoints": true
     }
   ]
 }

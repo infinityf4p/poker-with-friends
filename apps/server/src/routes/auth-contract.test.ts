@@ -2,6 +2,7 @@ import {
   adminAdjustAccountChipsSchema,
   adminAdjustStackSchema,
   adminKickPlayerSchema,
+  adminLoginSchema,
   adminRestorePlayerSchema,
   changeUserPasswordSchema,
   createUserAccountSchema,
@@ -26,6 +27,13 @@ describe('permanent user auth contract', () => {
     ).toBe(true);
     expect(resetUserPasswordSchema.safeParse({}).success).toBe(true);
     expect(resetUserPasswordSchema.safeParse({ password: 'abc123' }).success).toBe(false);
+  });
+
+  it('allows administrators to log in with a six-character changed password', () => {
+    expect(adminLoginSchema.safeParse({ username: 'admin', password: 'abc123' }).success).toBe(
+      true,
+    );
+    expect(adminLoginSchema.safeParse({ username: 'admin', password: '' }).success).toBe(false);
   });
 
   it('rejects invalid account names with the complete validation message', () => {
@@ -90,7 +98,7 @@ describe('permanent user auth contract', () => {
     expect(joinRoomSchema.parse({})).toEqual({});
   });
 
-  it('requires an invite for registration and protects profile password changes', () => {
+  it('requires an invite for registration and allows session-authenticated profile password changes', () => {
     expect(
       registrationSchema.safeParse({
         inviteCode: 'a'.repeat(43),
@@ -99,7 +107,7 @@ describe('permanent user auth contract', () => {
       }).success,
     ).toBe(true);
     expect(updateUserProfileSchema.safeParse({ displayName: '新昵称' }).success).toBe(true);
-    expect(updateAdminProfileSchema.safeParse({ newPassword: 'abc123' }).success).toBe(false);
+    expect(updateAdminProfileSchema.safeParse({ newPassword: 'abc123' }).success).toBe(true);
     expect(
       updateUserProfileSchema.safeParse({ currentPassword: 'old-pass', newPassword: 'new-pass' })
         .success,
@@ -108,10 +116,9 @@ describe('permanent user auth contract', () => {
 
   it('keeps optional password changes valid without affecting direct login', () => {
     const password = 'same-long-passphrase';
-    expect(
-      changeUserPasswordSchema.safeParse({ currentPassword: password, newPassword: password })
-        .success,
-    ).toBe(false);
+    expect(changeUserPasswordSchema.safeParse({ newPassword: password }).success).toBe(true);
+    expect(changeUserPasswordSchema.safeParse({ newPassword: '12345' }).success).toBe(false);
+    expect(updateUserProfileSchema.safeParse({}).success).toBe(false);
     expect(userLoginSchema.safeParse({ username: 'player_1', password }).success).toBe(true);
   });
 

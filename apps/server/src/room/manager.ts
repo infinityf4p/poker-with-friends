@@ -133,6 +133,10 @@ export class RoomManager {
     return (await this.actor(roomId)).liveResultConfirm(playerId, command);
   }
 
+  public async ownerArchive(roomId: string, ownerUserId: string): Promise<boolean> {
+    return (await this.actor(roomId)).ownerArchive(ownerUserId);
+  }
+
   public async adminArchive(roomId: string, adminId: string): Promise<boolean> {
     return (await this.actor(roomId)).adminArchive(adminId);
   }

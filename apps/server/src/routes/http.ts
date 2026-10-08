@@ -132,9 +132,16 @@ export async function registerHttpRoutes(
       if (!user) {
         return reply.code(401).send({ error: 'INVALID_CREDENTIALS', message: '账号或密码错误' });
       }
-      const token = await repository.createUserSession(user.id);
-      reply.setCookie(USER_COOKIE, token, cookieOptions);
-      return user;
+      try {
+        const token = await repository.createUserSession(user.id);
+        reply.setCookie(USER_COOKIE, token, cookieOptions);
+        return user;
+      } catch (error) {
+        if (error instanceof Error && error.message === 'USER_NOT_FOUND') {
+          return reply.code(401).send({ error: 'INVALID_CREDENTIALS', message: '账号或密码错误' });
+        }
+        throw error;
+      }
     },
   );
 
@@ -188,13 +195,9 @@ export async function registerHttpRoutes(
     if (!user) return;
     const parsed = changeUserPasswordSchema.safeParse(request.body);
     if (!parsed.success) return sendValidationError(reply, parsed.error.issues);
-    const changed = await repository.changeUserPassword(
-      user.id,
-      parsed.data.currentPassword,
-      parsed.data.newPassword,
-    );
+    const changed = await repository.changeUserPassword(user.id, parsed.data.newPassword);
     if (!changed) {
-      return reply.code(401).send({ error: 'INVALID_CREDENTIALS', message: '当前密码不正确' });
+      return reply.code(401).send({ error: 'UNAUTHORIZED', message: '账号已不可用，请重新登录' });
     }
     reply.setCookie(USER_COOKIE, changed.sessionToken, cookieOptions);
     return changed.user;
@@ -208,7 +211,7 @@ export async function registerHttpRoutes(
     try {
       const updated = await repository.updateUserProfile(user.id, parsed.data);
       if (!updated) {
-        return reply.code(401).send({ error: 'INVALID_CREDENTIALS', message: '当前密码不正确' });
+        return reply.code(401).send({ error: 'UNAUTHORIZED', message: '账号已不可用，请重新登录' });
       }
       if (updated.sessionToken) reply.setCookie(USER_COOKIE, updated.sessionToken, cookieOptions);
       await Promise.all(updated.roomIds.map((roomId) => rooms.refreshPlayers(roomId)));
@@ -303,7 +306,7 @@ export async function registerHttpRoutes(
     try {
       const updated = await repository.updateAdminProfile(admin.id, parsed.data);
       if (!updated) {
-        return reply.code(401).send({ error: 'INVALID_CREDENTIALS', message: '当前密码不正确' });
+        return reply.code(401).send({ error: 'UNAUTHORIZED', message: '账号已不可用，请重新登录' });
       }
       if (updated.sessionToken) reply.setCookie(ADMIN_COOKIE, updated.sessionToken, cookieOptions);
       await Promise.all(updated.roomIds.map((roomId) => rooms.refreshPlayers(roomId)));
@@ -342,6 +345,25 @@ export async function registerHttpRoutes(
         return reply.code(400).send({
           error: 'BAD_REQUEST',
           message: '账号超过 20 位时必须填写 20 位以内的显示名称',
+        });
+      }
+      throw error;
+    }
+  });
+
+  app.delete<{ Params: { id: string } }>('/api/admin/users/:id', async (request, reply) => {
+    const admin = await requireAdmin(request, reply, repository);
+    if (!admin) return;
+    try {
+      if (!(await repository.deleteUserAccount(admin.id, request.params.id))) {
+        return reply.code(404).send({ error: 'USER_NOT_FOUND', message: '账号不存在' });
+      }
+      return reply.code(204).send();
+    } catch (error) {
+      if (error instanceof Error && error.message === 'USER_ACCOUNT_IN_ROOM') {
+        return reply.code(409).send({
+          error: 'USER_ACCOUNT_IN_ROOM',
+          message: '该账号仍属于未结束或未结算的牌局，请先结束并结算牌局再删除账号',
         });
       }
       throw error;
@@ -515,6 +537,11 @@ export async function registerHttpRoutes(
         }
         return result;
       } catch (error) {
+        if (error instanceof Error && error.message === 'USER_NOT_FOUND') {
+          return reply
+            .code(409)
+            .send({ error: 'CONFLICT', message: '玩家账号已删除，无法恢复牌局成员' });
+        }
         if (error instanceof Error && error.message === 'ROOM_NOT_FOUND') {
           return reply.code(404).send({ error: 'NOT_FOUND', message: '牌桌不存在' });
         }
@@ -637,6 +664,20 @@ export async function registerHttpRoutes(
       }
     },
   );
+
+  app.post<{ Params: { id: string } }>('/api/rooms/:id/archive', async (request, reply) => {
+    const user = await requireUser(request, reply, repository);
+    if (!user) return;
+    const loaded = await repository.loadRoom(request.params.id);
+    if (!loaded) return reply.code(404).send({ error: 'NOT_FOUND', message: '牌局不存在' });
+    if (loaded.room.createdByUserId !== user.id) {
+      return reply.code(403).send({ error: 'FORBIDDEN', message: '只有房主可以结束牌局' });
+    }
+    if (!(await rooms.ownerArchive(request.params.id, user.id))) {
+      return reply.code(409).send({ error: 'ACTIVE_HAND', message: '请在当前手牌结算后结束牌局' });
+    }
+    return { ok: true, archived: true, cashedOut: true };
+  });
 
   app.get<{ Params: { id: string } }>('/api/rooms/:id/chips', async (request, reply) => {
     const user = await requireUser(request, reply, repository);

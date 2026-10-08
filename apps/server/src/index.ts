@@ -9,6 +9,7 @@ const config = loadConfig();
 const { db, client } = createDatabase(config.DATABASE_URL);
 const repository = new PokerRepository(db, config);
 await repository.ensureConfiguredAdmin();
+await repository.reconcileArchivedRoomChips();
 const rooms = new RoomManager(repository);
 const { app, io } = await buildApp({ config, repository, rooms });
 

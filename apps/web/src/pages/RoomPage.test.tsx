@@ -5,10 +5,13 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import type { RoomSnapshotEnvelope } from '@poker-with-friends/protocol';
 import { RoomPage } from './RoomPage';
 import type { RoomConnection } from '../use-room';
+import { api } from '../api';
+import { navigate } from '../navigation';
 
 const mocks = vi.hoisted(() => ({ connection: null as RoomConnection | null }));
 vi.mock('../use-room', () => ({ useRoom: () => mocks.connection }));
 vi.mock('../api', () => ({ api: vi.fn(async () => []) }));
+vi.mock('../navigation', () => ({ navigate: vi.fn() }));
 
 function snapshot(): RoomSnapshotEnvelope {
   const now = new Date().toISOString();
@@ -105,6 +108,7 @@ const click = async (label: string) => {
 };
 
 beforeEach(() => {
+  vi.clearAllMocks();
   Object.assign(globalThis, { IS_REACT_ACT_ENVIRONMENT: true });
   const state = snapshot();
   connection = {
@@ -132,6 +136,53 @@ afterEach(async () => {
 });
 
 describe('table interaction', () => {
+  it('only offers room settlement to the owner and blocks it during a hand', async () => {
+    await render();
+    await act(async () =>
+      document.querySelector<HTMLButtonElement>('[aria-label="牌桌设置"]')!.click(),
+    );
+    expect(document.body.textContent).not.toContain('结束牌局并结算');
+    connection.room = { ...connection.room!, ownerPlayerId: connection.me!.playerId };
+    await render();
+    expect(button('结束牌局并结算').disabled).toBe(true);
+    connection.room = { ...connection.room!, status: 'BETWEEN_HANDS', prompt: null };
+    await render();
+    expect(button('结束牌局并结算').disabled).toBe(false);
+  });
+
+  it('confirms room settlement, prevents duplicate submission and waits before returning to the lobby', async () => {
+    connection.room = {
+      ...connection.room!,
+      ownerPlayerId: connection.me!.playerId,
+      status: 'BETWEEN_HANDS',
+      prompt: null,
+    };
+    const confirm = vi.spyOn(window, 'confirm').mockReturnValue(false);
+    await render();
+    await act(async () =>
+      document.querySelector<HTMLButtonElement>('[aria-label="牌桌设置"]')!.click(),
+    );
+    await click('结束牌局并结算');
+    expect(api).not.toHaveBeenCalled();
+    confirm.mockReturnValue(true);
+    let finish!: () => void;
+    vi.mocked(api).mockImplementationOnce(
+      () =>
+        new Promise((resolve) => {
+          finish = () => resolve({ ok: true });
+        }),
+    );
+    await click('结束牌局并结算');
+    expect(button('正在结算…').disabled).toBe(true);
+    await click('正在结算…');
+    expect(api).toHaveBeenCalledExactlyOnceWith('/api/rooms/test-table/archive', {
+      method: 'POST',
+    });
+    expect(navigate).not.toHaveBeenCalled();
+    await act(async () => finish());
+    expect(navigate).toHaveBeenCalledExactlyOnceWith('/');
+  });
+
   it('keeps hand history open when the next hand begins', async () => {
     await render();
     await act(async () =>

@@ -33,6 +33,18 @@
   --amber: #9e741f;
   --gold: #9e741f;
   --shadow: 0 3px 14px rgb(26 39 35 / 4%);
+  --surface-strong: #ffffff;
+  --surface-hover: #f0f5f2;
+  --field-bg: #ffffff;
+  --overlay: rgb(20 32 28 / 38%);
+  --action-bg: #252a29;
+  --action-hover: #414745;
+  --action-text: #ffffff;
+  --positive-bg: #edf6f2;
+  --positive-line: #cbded3;
+  --danger-bg: #fff6f6;
+  --danger-hover: #fbe9eb;
+  --danger-line: #f2d8db;
   --radius-sm: 6px;
   --radius: 8px;
   --radius-lg: 8px;
@@ -179,31 +191,31 @@ svg {
 }
 .primary-button,
 .create-button {
-  color: #fff;
-  background: #252a29;
+  color: var(--action-text);
+  background: var(--action-bg);
 }
 .primary-button {
   width: 100%;
 }
 .primary-button:hover:not(:disabled),
 .create-button:hover:not(:disabled) {
-  background: #414745;
+  background: var(--action-hover);
 }
 .secondary-button {
-  background: #fff;
+  background: var(--surface-strong);
   border-color: var(--line-strong);
 }
 .secondary-button:hover:not(:disabled) {
-  background: var(--surface);
-  border-color: #bec8c5;
+  background: var(--surface-hover);
+  border-color: var(--line-strong);
 }
 .danger-button {
-  color: #b43843;
-  background: #fff6f6;
-  border-color: #f2d8db;
+  color: var(--red);
+  background: var(--danger-bg);
+  border-color: var(--danger-line);
 }
 .danger-button:hover:not(:disabled) {
-  background: #fbe9eb;
+  background: var(--danger-hover);
 }
 .text-button {
   min-height: 40px;
@@ -245,7 +257,7 @@ svg {
 .field > span,
 .field label {
   font-size: 12px;
-  color: #56615d;
+  color: var(--muted);
   font-weight: 550;
 }
 .field > span small {
@@ -262,7 +274,7 @@ svg {
   border: 1px solid var(--line-strong);
   border-radius: 6px;
   color: var(--text);
-  background: #fff;
+  background: var(--field-bg);
   font-size: 14px;
   transition:
     border-color 0.16s,
@@ -271,12 +283,12 @@ svg {
 .field input:hover,
 .field textarea:hover,
 .field select:hover {
-  border-color: #b8c1bd;
+  border-color: var(--muted);
 }
 .field input:focus,
 .field textarea:focus,
 .field select:focus {
-  border-color: #72b9b1;
+  border-color: var(--mint);
 }
 .field input[aria-invalid='true'] {
   border-color: var(--red);
@@ -288,7 +300,7 @@ svg {
 }
 .field-error {
   display: block;
-  color: #b73844;
+  color: var(--red);
   font-size: 12px;
   line-height: 1.6;
 }
@@ -333,8 +345,8 @@ svg {
   width: 36px;
   height: 36px;
   border-radius: 50%;
-  background: #e2efea;
-  color: #367363;
+  background: var(--positive-bg);
+  color: var(--green-dark);
   font-size: 13px;
   font-weight: 650;
   line-height: 1;
@@ -356,7 +368,7 @@ svg {
   color: var(--muted);
 }
 .mode-badge--live {
-  color: #8c7044;
+  color: var(--amber);
 }
 .status-pill {
   padding: 3px 7px;
@@ -364,12 +376,12 @@ svg {
   background: var(--surface);
 }
 .status-pill--active {
-  color: #287966;
-  background: #edf6f2;
+  color: var(--green);
+  background: var(--positive-bg);
 }
 .status-pill--disputed {
-  color: #b43843;
-  background: #fff0f1;
+  color: var(--red);
+  background: var(--danger-bg);
 }
 .connection-dot,
 .room-live i,
@@ -2369,15 +2381,15 @@ svg {
   width: 66px;
   height: 72px;
   margin-bottom: 8px;
-  color: #a6b4aa;
+  color: var(--muted);
 }
 .history-empty-cards i {
   position: absolute;
   width: 35px;
   height: 48px;
-  border: 1px solid #dce6df;
+  border: 1px solid var(--line-strong);
   border-radius: 5px;
-  background: #f6f9f7;
+  background: var(--surface);
 }
 .history-empty-cards i:first-child {
   transform: rotate(-12deg);
@@ -2409,7 +2421,7 @@ svg {
   overflow: hidden;
 }
 .history-hand.expanded {
-  border-color: #c6d8ce;
+  border-color: var(--positive-line);
 }
 .history-hand__summary {
   display: flex;
@@ -2420,11 +2432,11 @@ svg {
   min-height: 69px;
   padding: 14px;
   border: 0;
-  background: #fff;
+  background: var(--surface-strong);
   text-align: left;
 }
 .history-hand__summary:hover {
-  background: #fafcfb;
+  background: var(--surface-hover);
 }
 .history-hand__number,
 .history-hand__outcome {
@@ -2449,7 +2461,7 @@ svg {
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
-  color: #56806a;
+  color: var(--green);
   font-size: 11px;
   font-weight: 500;
 }
@@ -2520,7 +2532,7 @@ svg {
   color: var(--muted);
 }
 .history-payouts li > b {
-  color: #4d8565;
+  color: var(--green);
   font-size: 12px;
   font-weight: 600;
 }
@@ -2537,7 +2549,7 @@ svg {
   padding-top: 13px;
 }
 .history-streets h4 {
-  color: #758e7e;
+  color: var(--muted);
   font-size: 10px;
   font-weight: 600;
 }
@@ -2659,7 +2671,7 @@ svg {
 }
 .admin-tabs button.active {
   color: var(--text);
-  border-color: #4e7760;
+  border-color: var(--mint);
 }
 .admin-tabs button span {
   margin-left: 7px;
@@ -2695,8 +2707,8 @@ svg {
   width: 38px;
   height: 38px;
   border-radius: 6px;
-  background: #eff5f1;
-  color: #6c8977;
+  background: var(--positive-bg);
+  color: var(--green);
 }
 .real-room-title h2 {
   font-size: 16px;
@@ -2724,16 +2736,16 @@ svg {
   padding: 8px 10px;
   border: 1px solid var(--line-strong);
   border-radius: 5px;
-  background: #fff;
+  background: var(--surface-strong);
   font-size: 11px;
 }
 .room-card-actions button:hover {
   background: var(--surface);
 }
 .room-card-actions .danger-button {
-  color: #b15562;
-  border-color: #edd5da;
-  background: #fff7f8;
+  color: var(--red);
+  border-color: var(--danger-line);
+  background: var(--danger-bg);
 }
 .invite-output {
   display: flex;
@@ -2742,9 +2754,9 @@ svg {
   gap: 15px;
   padding: 14px;
   margin-bottom: 20px;
-  border: 1px solid #d7e7dd;
+  border: 1px solid var(--positive-line);
   border-radius: 6px;
-  background: #f4faf6;
+  background: var(--positive-bg);
 }
 .invite-output div {
   display: grid;
@@ -2753,7 +2765,7 @@ svg {
 }
 .invite-output small {
   font-size: 10px;
-  color: #6c8776;
+  color: var(--green);
 }
 .invite-output code {
   display: block;
@@ -2766,10 +2778,10 @@ svg {
   flex-shrink: 0;
   min-height: 33px;
   padding: 6px 11px;
-  border: 1px solid #cbded3;
+  border: 1px solid var(--positive-line);
   border-radius: 5px;
-  background: #fff;
-  color: #5c7b67;
+  background: var(--surface-strong);
+  color: var(--green-dark);
   font-size: 11px;
 }
 .account-list {
@@ -2786,6 +2798,15 @@ svg {
 .data-header {
   color: var(--quiet);
   font-size: 10px;
+}
+.data-header > span:first-child {
+  grid-column: 1 / 3;
+}
+.data-header > span:nth-child(2) {
+  text-align: right;
+}
+.data-header > span:empty {
+  display: none;
 }
 .account-list > article {
   border-top: 1px solid var(--line);
@@ -2813,7 +2834,7 @@ svg {
   color: var(--muted);
 }
 .account-state.active {
-  color: #518165;
+  color: var(--green);
 }
 .compact-button {
   min-height: 32px;
@@ -2889,11 +2910,11 @@ svg {
   padding: 5px 7px;
   border: 1px solid var(--line);
   border-radius: 4px;
-  background: #fff;
+  background: var(--surface-strong);
   font-size: 10px;
 }
 .row-actions .danger-link {
-  color: #b25e69;
+  color: var(--red);
 }
 .invite-page {
   min-height: 100dvh;
@@ -3036,9 +3057,9 @@ svg {
   overflow-y: auto;
   overscroll-behavior: contain;
   padding: 25px;
-  border: 1px solid #e3e8e5;
+  border: 1px solid var(--line-strong);
   border-radius: 8px;
-  background: #fff;
+  background: var(--surface-strong);
   box-shadow: 0 15px 60px rgb(22 39 28 / 14%);
   animation: sheet-in 0.22s ease-out;
 }
@@ -3089,14 +3110,14 @@ svg {
   padding: 12px;
   border: 1px solid var(--line-strong);
   border-radius: 6px;
-  background: #fff;
+  background: var(--field-bg);
   color: var(--muted);
   font-size: 12px;
 }
 .mode-choice button.active {
-  background: #f1f7f3;
-  border-color: #a9c6b2;
-  color: #46674f;
+  background: var(--positive-bg);
+  border-color: var(--positive-line);
+  color: var(--green-dark);
 }
 .mode-choice b {
   font-weight: 500;
@@ -4253,9 +4274,9 @@ svg {
   font-size: 12px;
 }
 .mode-choice label:has(input:checked) {
-  border-color: #8dc4b0;
+  border-color: var(--positive-line);
   color: var(--green-dark);
-  background: #f1f7f3;
+  background: var(--positive-bg);
 }
 .form-hint {
   color: var(--muted);
@@ -4431,6 +4452,14 @@ svg {
   --surface-hover: #263d34;
   --field-bg: #101b17;
   --overlay: rgb(4 10 8 / 78%);
+  --action-bg: #73e2c9;
+  --action-hover: #a5ead0;
+  --action-text: #07120e;
+  --positive-bg: #15362d;
+  --positive-line: #3b8c77;
+  --danger-bg: #2a171a;
+  --danger-hover: #422329;
+  --danger-line: #63353b;
 }
 
 :root[data-theme='light'] {
@@ -4451,11 +4480,12 @@ html[data-theme='dark'] .state-page {
 html[data-theme='dark'] .table-page {
   background: #0b1210;
 }
-html[data-theme='dark'] .primary-button {
-  color: #07120e;
+html[data-theme='dark'] .primary-button,
+html[data-theme='dark'] .create-button {
+  color: var(--action-text);
+  background: var(--action-bg);
 }
 html[data-theme='dark'] .secondary-button,
-html[data-theme='dark'] .danger-button,
 html[data-theme='dark'] .icon-button,
 html[data-theme='dark'] .field input,
 html[data-theme='dark'] .field textarea,
@@ -4479,10 +4509,10 @@ html[data-theme='dark'] .table-sidebar {
 }
 html[data-theme='dark'] .field > span,
 html[data-theme='dark'] .field label,
-html[data-theme='dark'] .mode-choice button {
+html[data-theme='dark'] .mode-choice button:not(.active) {
   color: var(--muted);
 }
-html[data-theme='dark'] .mode-choice button,
+html[data-theme='dark'] .mode-choice button:not(.active),
 html[data-theme='dark'] .lobby-refresh,
 html[data-theme='dark'] .lobby-filter[aria-pressed='true'],
 html[data-theme='dark'] .room-card {
@@ -4627,17 +4657,16 @@ html[data-theme='dark'] .history-table tbody tr:nth-child(even) {
   background: rgb(255 255 255 / 2%);
 }
 html[data-theme='dark'] .secondary-button,
-html[data-theme='dark'] .danger-button,
 html[data-theme='dark'] .icon-button,
 html[data-theme='dark'] .text-button,
-html[data-theme='dark'] button:not(.primary-button) {
+html[data-theme='dark'] button:not(.primary-button, .create-button, .danger-button, .danger-link) {
   color: var(--text);
 }
 html[data-theme='dark'] .secondary-button:hover,
-html[data-theme='dark'] .danger-button:hover,
 html[data-theme='dark'] .icon-button:hover,
 html[data-theme='dark'] .text-button:hover,
-html[data-theme='dark'] button:not(.primary-button):hover {
+html[data-theme='dark']
+  button:not(.primary-button, .create-button, .danger-button, .danger-link):hover {
   background: var(--surface-hover);
 }
 html[data-theme='dark'] .lobby-page,
@@ -4929,4 +4958,20 @@ html[data-theme='dark'] .playing-card--red {
   color: #fff;
   padding: 0 13px;
   cursor: pointer;
+}
+
+/* Semantic controls keep their meaning after shared dark-mode primitives. */
+html[data-theme='dark'] .primary-button:hover:not(:disabled),
+html[data-theme='dark'] .create-button:hover:not(:disabled) {
+  background: var(--action-hover);
+}
+html[data-theme='dark'] .danger-button,
+html[data-theme='dark'] .row-actions .danger-link {
+  color: var(--red);
+  background: var(--danger-bg);
+  border-color: var(--danger-line);
+}
+html[data-theme='dark'] .danger-button:hover:not(:disabled),
+html[data-theme='dark'] .row-actions .danger-link:hover:not(:disabled) {
+  background: var(--danger-hover);
 }

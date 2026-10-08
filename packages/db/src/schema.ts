@@ -49,6 +49,7 @@ export const admins = pgTable('admins', {
   username: text('username').notNull().unique(),
   displayName: text('display_name').notNull().default(''),
   passwordHash: text('password_hash').notNull(),
+  passwordChangedAt: timestamp('password_changed_at', { withTimezone: true }),
   createdAt: createdAtColumn(),
   updatedAt: updatedAtColumn(),
 });
@@ -75,6 +76,7 @@ export const userAccounts = pgTable('user_accounts', {
   passwordHash: text('password_hash'),
   mustChangePassword: boolean('must_change_password').notNull().default(false),
   loginEnabled: boolean('login_enabled').notNull().default(true),
+  deletedAt: timestamp('deleted_at', { withTimezone: true }),
   linkedAdminId: uuid('linked_admin_id')
     .unique()
     .references(() => admins.id, { onDelete: 'set null' }),

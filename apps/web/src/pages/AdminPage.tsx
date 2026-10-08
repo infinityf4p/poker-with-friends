@@ -316,6 +316,17 @@ export function AdminPage() {
             users={users}
             onAdjust={(user) => setAccountChipUser(user)}
             onLedger={(user) => setAccountLedgerUser(user)}
+            onDelete={async (user) => {
+              await api(`/api/admin/users/${encodeURIComponent(user.id)}`, { method: 'DELETE' });
+              setUsers((current) => current.filter((item) => item.id !== user.id));
+              await loadRooms().catch((caught) =>
+                setError(
+                  caught instanceof Error
+                    ? `账号已删除，牌桌列表刷新失败：${caught.message}`
+                    : '账号已删除，牌桌列表刷新失败',
+                ),
+              );
+            }}
             onReset={async (user) => {
               const result = await api<{ temporaryPassword: string }>(
                 `/api/admin/users/${user.id}/reset-password`,
@@ -466,7 +477,6 @@ function AdminProfileDialog({
   onSaved: (admin: AdminSession) => void;
 }) {
   const [displayName, setDisplayName] = useState(admin.displayName ?? admin.username);
-  const [currentPassword, setCurrentPassword] = useState('');
   const [newPassword, setNewPassword] = useState('');
   const [pending, setPending] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -474,8 +484,7 @@ function AdminProfileDialog({
   const valid =
     displayName.trim().length > 0 &&
     displayName.trim().length <= 20 &&
-    (!currentPassword || (passwordChange && newPassword.length >= 6)) &&
-    (!passwordChange || currentPassword.length > 0);
+    (!passwordChange || (newPassword.length >= 6 && newPassword.length <= 256));
   return (
     <Modal title="管理员账号设置" onClose={onClose} locked={pending}>
       {error && <ErrorBox onClose={() => setError(null)}>{error}</ErrorBox>}
@@ -498,7 +507,7 @@ function AdminProfileDialog({
             method: 'PATCH',
             body: JSON.stringify({
               displayName: displayName.trim(),
-              ...(passwordChange ? { currentPassword, newPassword } : {}),
+              ...(passwordChange ? { newPassword } : {}),
             }),
           })
             .then(onSaved)
@@ -519,15 +528,6 @@ function AdminProfileDialog({
           ) : null}
         </label>
         <label className="field">
-          <span>当前密码（修改密码时填写）</span>
-          <input
-            type="password"
-            value={currentPassword}
-            onChange={(event) => setCurrentPassword(event.target.value)}
-            autoComplete="current-password"
-          />
-        </label>
-        <label className="field">
           <span>新密码（可选）</span>
           <input
             type="password"
@@ -535,6 +535,7 @@ function AdminProfileDialog({
             onChange={(event) => setNewPassword(event.target.value)}
             autoComplete="new-password"
             minLength={6}
+            maxLength={256}
           />
           {newPassword.length > 0 && newPassword.length < 6 && (
             <small className="field-error">密码至少需要 6 位。</small>
@@ -553,13 +554,16 @@ function AccountsPanel({
   onAdjust,
   onLedger,
   onReset,
+  onDelete,
 }: {
   users: AdminUserSummary[];
   onAdjust: (user: AdminUserSummary) => void;
   onLedger: (user: AdminUserSummary) => void;
   onReset: (user: AdminUserSummary) => Promise<{ temporaryPassword: string }>;
+  onDelete: (user: AdminUserSummary) => Promise<void>;
 }) {
   const [resetting, setResetting] = useState<AdminUserSummary | null>(null);
+  const [deleting, setDeleting] = useState<AdminUserSummary | null>(null);
   return (
     <section className="account-list">
       <header className="data-header">
@@ -590,10 +594,20 @@ function AccountsPanel({
             <button className="secondary-button compact-button" onClick={() => setResetting(user)}>
               <Icon name="key" size={15} /> 重置密码
             </button>
+            <button className="danger-button compact-button" onClick={() => setDeleting(user)}>
+              删除账号
+            </button>
           </span>
         </article>
       ))}
       {users.length === 0 && <div className="empty-state">暂无玩家账号</div>}
+      {deleting && (
+        <DeleteAccountDialog
+          user={deleting}
+          onClose={() => setDeleting(null)}
+          onSubmit={() => onDelete(deleting)}
+        />
+      )}
       {resetting && (
         <ResetPasswordDialog
           user={resetting}
@@ -602,6 +616,52 @@ function AccountsPanel({
         />
       )}
     </section>
+  );
+}
+
+function DeleteAccountDialog({
+  user,
+  onClose,
+  onSubmit,
+}: {
+  user: AdminUserSummary;
+  onClose: () => void;
+  onSubmit: () => Promise<void>;
+}) {
+  const [pending, setPending] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+  return (
+    <Modal title={`删除 ${user.displayName} 的账号`} onClose={onClose} locked={pending}>
+      {error && <ErrorBox onClose={() => setError(null)}>{error}</ErrorBox>}
+      <p>
+        确定删除 {user.displayName}（@{user.username}
+        ）？删除后该账号将无法登录，历史牌局与筹码记录会保留。此操作无法撤销。
+      </p>
+      <p>如果该账号仍属于未结束的牌局，请先结束牌局再删除。</p>
+      <div className="modal-actions">
+        <button className="secondary-button" type="button" onClick={onClose} disabled={pending}>
+          取消
+        </button>
+        <button
+          className="danger-button"
+          type="button"
+          disabled={pending}
+          onClick={() => {
+            if (pending) return;
+            setPending(true);
+            setError(null);
+            void onSubmit()
+              .then(onClose)
+              .catch((caught) =>
+                setError(caught instanceof Error ? caught.message : '删除账号失败'),
+              )
+              .finally(() => setPending(false));
+          }}
+        >
+          {pending ? '删除中…' : '确认删除账号'}
+        </button>
+      </div>
+    </Modal>
   );
 }
 

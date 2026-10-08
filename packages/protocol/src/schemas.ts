@@ -54,7 +54,7 @@ export const roomSettingsSchema = z
 
 export const adminLoginSchema = z.object({
   username: z.string().trim().min(1).max(64),
-  password: z.string().min(8).max(256),
+  password: z.string().min(1).max(256),
 });
 
 export const userLoginSchema = z.object({
@@ -68,51 +68,18 @@ export const registrationSchema = z.object({
   password: userPasswordSchema,
 });
 
-export const changeUserPasswordSchema = z
-  .object({
-    currentPassword: z.string().min(1).max(256),
-    newPassword: userPasswordSchema,
-  })
-  .refine((value) => value.currentPassword !== value.newPassword, {
-    path: ['newPassword'],
-    message: '新密码不能与当前密码相同',
-  });
+export const changeUserPasswordSchema = z.object({
+  newPassword: userPasswordSchema,
+});
 
 const profileSchema = z
   .object({
     displayName: nicknameSchema.optional(),
-    currentPassword: z.string().min(1).max(256).optional(),
     newPassword: userPasswordSchema.optional(),
   })
-  .superRefine((value, ctx) => {
-    if (!value.displayName && !value.newPassword) {
-      ctx.addIssue({
-        code: z.ZodIssueCode.custom,
-        path: ['displayName'],
-        message: '请填写昵称或新密码',
-      });
-    }
-    if (value.newPassword && !value.currentPassword) {
-      ctx.addIssue({
-        code: z.ZodIssueCode.custom,
-        path: ['currentPassword'],
-        message: '修改密码前请输入当前密码',
-      });
-    }
-    if (value.currentPassword && !value.newPassword) {
-      ctx.addIssue({
-        code: z.ZodIssueCode.custom,
-        path: ['newPassword'],
-        message: '请输入新密码',
-      });
-    }
-    if (value.currentPassword && value.newPassword && value.currentPassword === value.newPassword) {
-      ctx.addIssue({
-        code: z.ZodIssueCode.custom,
-        path: ['newPassword'],
-        message: '新密码不能与当前密码相同',
-      });
-    }
+  .refine((value) => value.displayName !== undefined || value.newPassword !== undefined, {
+    path: ['displayName'],
+    message: '请填写昵称或新密码',
   });
 
 export const updateUserProfileSchema = profileSchema;

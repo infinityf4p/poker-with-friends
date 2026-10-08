@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState, type ReactNode } from 'react';
+import { useEffect, useMemo, useRef, useState, type ReactNode } from 'react';
 import type {
   Card,
   ChipLedgerResponse,
@@ -51,6 +51,8 @@ export function RoomPage({ roomId }: { roomId: string }) {
   const [seconds, setSeconds] = useState(0);
   const [peeking, setPeeking] = useState(false);
   const [settingsOpen, setSettingsOpen] = useState(false);
+  const [endingRoom, setEndingRoom] = useState(false);
+  const endingRoomRef = useRef(false);
   const [motion, setMotion] = useState(true);
   const { room, me, chat, sendChat } = connection;
 
@@ -192,6 +194,21 @@ export function RoomPage({ roomId }: { roomId: string }) {
       ? '等待下一位玩家行动'
       : '等待下一手确认';
   const isOwner = Boolean(me && room.ownerPlayerId === me.playerId);
+  const endRoom = async () => {
+    if (!isOwner || endingRoomRef.current || room.status === 'ACTIVE' || frozen) return;
+    if (!window.confirm('结束这场牌局？所有玩家剩余的桌上筹码将自动返回各自账户。')) return;
+    endingRoomRef.current = true;
+    setEndingRoom(true);
+    try {
+      await api(`/api/rooms/${roomId}/archive`, { method: 'POST' });
+      navigate('/');
+    } catch (caught) {
+      setPageError(caught instanceof Error ? caught.message : '结束牌局失败');
+    } finally {
+      endingRoomRef.current = false;
+      setEndingRoom(false);
+    }
+  };
   const kickPlayer = async (playerId: string) => {
     if (!isOwner || playerId === me?.playerId) return;
     if (!window.confirm('确定要将这位玩家移出牌局吗？')) return;
@@ -477,6 +494,22 @@ export function RoomPage({ roomId }: { roomId: string }) {
               onChange={(event) => setMotion(event.target.checked)}
             />
           </label>
+          {isOwner && room.status !== 'ARCHIVED' && (
+            <div className="dialog-form">
+              <p>结束牌局后，所有玩家剩余筹码自动返回账户，并保留结算记录。</p>
+              <button
+                type="button"
+                className="danger-button"
+                disabled={endingRoom || room.status === 'ACTIVE' || frozen}
+                onClick={() => void endRoom()}
+              >
+                {endingRoom ? '正在结算…' : '结束牌局并结算'}
+              </button>
+              {(room.status === 'ACTIVE' || room.status === 'DISPUTED') && (
+                <small>当前手牌结算后可结束牌局。</small>
+              )}
+            </div>
+          )}
         </Modal>
       )}
       {winnerForm && (

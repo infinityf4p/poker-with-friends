@@ -140,10 +140,34 @@ function asRuntimeState(loaded: LoadedRoom): RuntimeRoomState {
     return {
       ...runtimeState,
       ownerUserId: loaded.room.createdByUserId ?? runtimeState.ownerUserId ?? null,
+      status: loaded.room.status,
+      serverSeq: loaded.room.serverSeq,
       // Socket presence cannot survive a process restart.
-      players: (stored.players as RuntimePlayer[]).map((player) => ({
+      players: [
+        ...(stored.players as RuntimePlayer[]),
+        ...loaded.players
+          .filter((row) => !stored.players!.some((player) => player.id === row.id))
+          .map((row) => ({
+            id: row.id,
+            userId: row.userId,
+            nickname: row.nickname,
+            seat: row.seat,
+            stack: row.stack,
+            accountChips: accountChipsByUserId[row.userId] ?? 50_000,
+            topUpTotal: 0,
+            lastTopUpAmount: 0,
+            ready: row.ready,
+            connected: false,
+            sittingOut: row.sittingOut,
+            membershipStatus: row.membershipStatus,
+            kickedAt: row.kickedAt?.toISOString() ?? null,
+            kickedByAdminId: row.kickedByAdminId,
+            kickReason: row.kickReason,
+          })),
+      ].map((player) => ({
         ...player,
         userId: rowsById.get(player.id)?.userId ?? player.userId,
+        stack: rowsById.get(player.id)?.stack ?? player.stack,
         accountChips:
           accountChipsByUserId[rowsById.get(player.id)?.userId ?? player.userId] ??
           player.accountChips ??
@@ -877,7 +901,7 @@ export class RoomActor {
   ): Promise<void> {
     this.state.serverSeq += 1;
     this.state.updatedAt = nowIso();
-    const projections = buildProjections(this.state);
+    let projections = buildProjections(this.state);
     if (command) command.result = successfulResult(this.state, command.playerId);
     const handUpdate = extras.handUpdate
       ? {
@@ -921,6 +945,13 @@ export class RoomActor {
       ...(extras.liveProposalUpdate ? { liveProposalUpdate: extras.liveProposalUpdate } : {}),
       ...(extras.audit ? { audit: extras.audit } : {}),
     });
+    if (this.state.status === 'ARCHIVED') {
+      for (const player of this.state.players) {
+        player.stack = 0;
+        player.ready = false;
+      }
+    }
+    projections = buildProjections(this.state);
     try {
       this.onProjection(this.state.roomId, projections);
     } catch {
@@ -1047,6 +1078,18 @@ export class RoomActor {
             requestHash,
           );
           if (persisted?.kind === 'match') return persisted.result;
+          if (error instanceof Error && error.message === 'INSUFFICIENT_ACCOUNT_CHIPS') {
+            const rejected = this.failure('CONFLICT', '账户筹码不足，请先补充账户余额');
+            await this.repository.persistRejectedCommand(
+              this.state.roomId,
+              envelope.commandId,
+              playerId,
+              requestHash,
+              this.state.serverSeq,
+              rejected,
+            );
+            return rejected;
+          }
           if (error instanceof Error && error.message === 'ROOM_SEQUENCE_FENCE_CONFLICT') {
             return this.failure('STALE_SEQUENCE', '牌桌已由更新状态接管，请同步后重试');
           }
@@ -1058,6 +1101,7 @@ export class RoomActor {
 
   public async refreshPlayers(loaded: LoadedRoom): Promise<void> {
     return this.enqueue(async () => {
+      if (this.state.status === 'ARCHIVED') return;
       const existing = new Map(this.state.players.map((player) => [player.id, player]));
       let changed = false;
       const accountChipsByUserId = loaded.accountChipsByUserId ?? {};
@@ -1201,9 +1245,7 @@ export class RoomActor {
       }
       const before = player.stack;
       const topUpAmount = this.state.settings.stackCap - before;
-      if (player.accountChips < topUpAmount) {
-        throw new RoomRuleError('CONFLICT', '账户筹码不足，请先补充账户余额');
-      }
+      // The repository checks the current shared account balance atomically.
       player.stack = this.state.settings.stackCap;
       player.accountChips -= topUpAmount;
       player.topUpTotal += topUpAmount;
@@ -1688,6 +1730,10 @@ export class RoomActor {
           stack: player.stack,
         };
       }
+      const loaded = await this.repository.loadRoom?.(this.state.roomId);
+      if (loaded?.unavailableUserIds?.includes(player.userId)) {
+        return { ok: false, code: 'CONFLICT', message: '账号已删除，不能恢复到牌桌' };
+      }
       const activeMembers = this.state.players.filter(
         (candidate) => candidate.membershipStatus !== 'KICKED' && candidate.id !== playerId,
       ).length;
@@ -1727,6 +1773,21 @@ export class RoomActor {
         membershipStatus: player.membershipStatus,
         stack: player.stack,
       };
+    });
+  }
+
+  public async ownerArchive(ownerUserId: string): Promise<boolean> {
+    return this.enqueue(async () => {
+      if (this.state.ownerUserId !== ownerUserId) return false;
+      if (this.state.status === 'ARCHIVED') return true;
+      if (this.state.status === 'ACTIVE' || this.state.status === 'DISPUTED') return false;
+      this.state.status = 'ARCHIVED';
+      this.state.nextHandAt = null;
+      await this.commit({
+        eventType: 'ROOM_ARCHIVED',
+        audit: { action: 'ROOM_ARCHIVED_BY_OWNER', metadata: { ownerUserId } },
+      });
+      return true;
     });
   }
 
@@ -1776,6 +1837,7 @@ export class RoomActor {
         hand.actionDeadlineAt = null;
         hand.liveProposal = null;
         hand.liveHadObjection = false;
+        hand.pendingLiveStreet = null;
         assertHandChipsConserved(this.state, hand);
       }
       for (const player of this.state.players) {
