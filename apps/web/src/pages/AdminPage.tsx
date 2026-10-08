@@ -172,14 +172,16 @@ export function AdminPage() {
             <h1>{tab === 'rooms' ? '牌桌管理' : '账号管理'}</h1>
           </div>
           <div className="welcome-actions">
-            <button
-              className="secondary-button"
-              onClick={() => void createRegistrationInvite()}
-              disabled={registrationInviteLoading}
-            >
-              <Icon name="key" size={17} />{' '}
-              {registrationInviteLoading ? '生成中…' : '生成注册邀请码'}
-            </button>
+            {tab === 'accounts' && (
+              <button
+                className="secondary-button"
+                onClick={() => void createRegistrationInvite()}
+                disabled={registrationInviteLoading}
+              >
+                <Icon name="key" size={17} />{' '}
+                {registrationInviteLoading ? '生成中…' : '生成注册邀请码'}
+              </button>
+            )}
             {tab === 'rooms' && (
               <button
                 className="create-button"
@@ -235,7 +237,7 @@ export function AdminPage() {
             </button>
           </div>
         )}
-        {registrationInvite && (
+        {tab === 'accounts' && registrationInvite && (
           <div className="invite-output">
             <div>
               <small role="status">注册邀请码（已复制）</small>

@@ -4212,31 +4212,6 @@ svg {
   flex-wrap: wrap;
   justify-content: flex-end;
 }
-.account-invite-button {
-  padding: 5px 0;
-  font-size: 11px;
-}
-.invite-code-banner {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  gap: 12px;
-  margin: -14px 0 24px;
-  padding: 13px 16px;
-  border: 1px solid #cce5da;
-  border-radius: 8px;
-  color: var(--green-dark);
-  background: #f1faf5;
-}
-.invite-code-banner span {
-  display: grid;
-  gap: 4px;
-}
-.invite-code-banner code {
-  color: var(--text);
-  font-size: 12px;
-  overflow-wrap: anywhere;
-}
 .stacked-form {
   display: grid;
   gap: 16px;
@@ -4566,8 +4541,7 @@ html[data-theme='dark'] .table-notice-wrap .real-error {
   background: #2a171a;
   color: #ffadb3;
 }
-html[data-theme='dark'] .success-box,
-html[data-theme='dark'] .invite-code-banner {
+html[data-theme='dark'] .success-box {
   border-color: #245748;
   background: #112d25;
   color: #a4e7cf;

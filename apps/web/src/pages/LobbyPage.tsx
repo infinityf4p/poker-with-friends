@@ -32,8 +32,6 @@ export function LobbyPage() {
   const [createOpen, setCreateOpen] = useState(false);
   const [creating, setCreating] = useState(false);
   const [createError, setCreateError] = useState<string | null>(null);
-  const [registrationInvite, setRegistrationInvite] = useState<string | null>(null);
-  const [creatingInvite, setCreatingInvite] = useState(false);
   const [profileOpen, setProfileOpen] = useState(false);
   const joiningRef = useRef(false);
   const refreshingRef = useRef(false);
@@ -174,23 +172,6 @@ export function LobbyPage() {
     }
   };
 
-  const createRegistrationInvite = async () => {
-    if (creatingInvite) return;
-    setCreatingInvite(true);
-    setError(null);
-    try {
-      const result = await api<{ code: string }>('/api/auth/registration-invites', {
-        method: 'POST',
-      });
-      setRegistrationInvite(result.code);
-      await navigator.clipboard?.writeText(result.code).catch(() => undefined);
-    } catch (caught) {
-      setError(caught instanceof Error ? caught.message : '邀请码生成失败');
-    } finally {
-      setCreatingInvite(false);
-    }
-  };
-
   const visibleRooms = rooms.filter((room) => {
     const canEnter =
       room.membership?.status !== 'KICKED' && (room.availableSeats > 0 || room.membership !== null);
@@ -301,21 +282,13 @@ export function LobbyPage() {
           >
             设置
           </button>
-          <button
-            type="button"
-            className="text-button account-invite-button"
-            onClick={() => void createRegistrationInvite()}
-            disabled={creatingInvite}
-          >
-            {creatingInvite ? '生成中…' : '生成注册邀请码'}
-          </button>
         </div>
       </header>
       <div className="page-container lobby-content">
         <section className="lobby-heading">
           <div>
             <h1>牌桌大厅</h1>
-            <p className="lobby-heading__sub">创建牌局后自动成为房主，分享邀请码邀请朋友。</p>
+            <p className="lobby-heading__sub">创建牌局后自动成为房主，分享邀请链接邀请朋友。</p>
           </div>
           <button
             type="button"
@@ -339,21 +312,6 @@ export function LobbyPage() {
           </div>
         </section>
         {error && <ErrorBox onClose={() => setError(null)}>{error}</ErrorBox>}
-        {registrationInvite && (
-          <div className="invite-code-banner" role="status">
-            <span>
-              <strong>注册邀请码</strong>
-              <code>{registrationInvite}</code>
-            </span>
-            <button
-              type="button"
-              className="text-button"
-              onClick={() => setRegistrationInvite(null)}
-            >
-              知道了
-            </button>
-          </div>
-        )}
         <section className="lobby-room-section" aria-label="浏览牌桌">
           <header className="lobby-room-toolbar">
             <div className="lobby-filters" role="group" aria-label="牌桌类型">
