@@ -227,10 +227,14 @@ export function LobbyPage() {
                   method: 'POST',
                   body: JSON.stringify({ username, password }),
                 });
-                if (mountedRef.current && generation === sessionGeneration.current) {
-                  setError(null);
-                  navigate('/admin');
-                }
+                const user = await api<UserSession>('/api/auth/session');
+                if (!mountedRef.current || generation !== sessionGeneration.current) return;
+                sessionGeneration.current += 1;
+                setSession(user);
+                setError(null);
+                await loadRooms().catch((error) =>
+                  setError(error instanceof Error ? error.message : '牌桌列表加载失败'),
+                );
                 return;
               } catch (adminCaught) {
                 // Keep the normal credential error for a failed fallback. A
@@ -789,6 +793,17 @@ function UserProfileDialog({
   return (
     <Modal title="设置" onClose={onClose} locked={pending}>
       {error && <ErrorBox onClose={() => setError(null)}>{error}</ErrorBox>}
+      {user.isAdmin && (
+        <section className="settings-section">
+          <div className="settings-section__heading">
+            <strong>管理后台</strong>
+            <small>管理牌桌、账号与账户筹码。</small>
+          </div>
+          <button className="secondary-button" onClick={() => navigate('/admin')}>
+            管理后台
+          </button>
+        </section>
+      )}
       <section className="settings-section">
         <div className="settings-section__heading">
           <strong>外观</strong>

@@ -132,6 +132,9 @@ export function AdminPage() {
       <header className="dashboard-header page-container">
         <Brand />
         <div className="admin-header-actions">
+          <button className="secondary-button compact-button" onClick={() => navigate('/')}>
+            返回大厅
+          </button>
           <button
             className="profile-button"
             aria-label={`编辑管理员资料 ${session.displayName ?? session.username}`}
@@ -385,6 +388,17 @@ export function AdminPage() {
           onClose={() => setProfileOpen(false)}
           onSaved={(updated) => {
             setSession(updated);
+            setUsers((current) =>
+              current.map((user) =>
+                user.linkedAdminId === updated.id
+                  ? {
+                      ...user,
+                      username: updated.username,
+                      displayName: updated.displayName ?? updated.username,
+                    }
+                  : user,
+              ),
+            );
             setProfileOpen(false);
           }}
         />
@@ -575,7 +589,10 @@ function AccountsPanel({
         <article key={user.id}>
           <span className="avatar">{user.displayName.slice(0, 1).toUpperCase()}</span>
           <span className="account-identity">
-            <strong>{user.displayName}</strong>
+            <strong>
+              {user.displayName}
+              {user.linkedAdminId && <span className="account-admin-badge">管理员</span>}
+            </strong>
             <small>
               @{user.username} · {formatPoints(user.chipBalance ?? 0)} 账户筹码 ·{' '}
               {new Date(user.createdAt).toLocaleDateString()}
@@ -591,12 +608,19 @@ function AccountsPanel({
             <button className="secondary-button compact-button" onClick={() => onLedger(user)}>
               筹码记录
             </button>
-            <button className="secondary-button compact-button" onClick={() => setResetting(user)}>
-              <Icon name="key" size={15} /> 重置密码
-            </button>
-            <button className="danger-button compact-button" onClick={() => setDeleting(user)}>
-              删除账号
-            </button>
+            {!user.linkedAdminId && (
+              <>
+                <button
+                  className="secondary-button compact-button"
+                  onClick={() => setResetting(user)}
+                >
+                  <Icon name="key" size={15} /> 重置密码
+                </button>
+                <button className="danger-button compact-button" onClick={() => setDeleting(user)}>
+                  删除账号
+                </button>
+              </>
+            )}
           </span>
         </article>
       ))}

@@ -147,8 +147,24 @@ describeWithDatabase('real HTTP + Socket.IO three-player table flow', () => {
       headers,
       ...(body === undefined ? {} : { body: JSON.stringify(body) }),
     });
-    const setCookie = response.headers.get('set-cookie');
-    if (setCookie) session.cookie = setCookie.split(';', 1)[0] ?? '';
+    const cookieJar = new Map(
+      session.cookie
+        .split('; ')
+        .filter(Boolean)
+        .map((pair) => {
+          const separator = pair.indexOf('=');
+          return [pair.slice(0, separator), pair.slice(separator + 1)];
+        }),
+    );
+    for (const setCookie of response.headers.getSetCookie()) {
+      const pair = setCookie.split(';', 1)[0]!;
+      const separator = pair.indexOf('=');
+      const name = pair.slice(0, separator);
+      const value = pair.slice(separator + 1);
+      if (value) cookieJar.set(name, value);
+      else cookieJar.delete(name);
+    }
+    session.cookie = [...cookieJar].map(([name, value]) => `${name}=${value}`).join('; ');
     const text = await response.text();
     const value = text.length === 0 ? null : (JSON.parse(text) as unknown);
     if (!response.ok) {

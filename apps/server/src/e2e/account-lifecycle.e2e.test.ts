@@ -110,6 +110,110 @@ describeWithDatabase('PostgreSQL account lifecycle', () => {
     }
   }, 60_000);
 
+  it('lists the bootstrap admin before playing and grants chips once under concurrent provisioning', async () => {
+    const accounts = await Promise.all(
+      Array.from({ length: 8 }, () => repository.ensureAdminPlayerAccount(admin)),
+    );
+    expect(new Set(accounts.map((account) => account.id)).size).toBe(1);
+    const linked = accounts[0]!;
+    expect(linked).toMatchObject({ username: admin.username, isAdmin: true, chipBalance: 50_000 });
+    expect(await repository.listUserAccounts()).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          id: linked.id,
+          username: admin.username,
+          loginEnabled: true,
+          linkedAdminId: admin.id,
+          isAdmin: true,
+        }),
+      ]),
+    );
+    expect(
+      await database.db
+        .select()
+        .from(accountLedgerEntries)
+        .where(eq(accountLedgerEntries.userId, linked.id)),
+    ).toHaveLength(1);
+    const [stored] = await database.db
+      .select()
+      .from(userAccounts)
+      .where(eq(userAccounts.id, linked.id));
+    expect(stored).toMatchObject({ loginEnabled: false, passwordHash: null });
+    const adjusted = await repository.adjustUserChips(
+      admin.id,
+      linked.id,
+      51_000,
+      'test adjustment',
+      randomUUID(),
+    );
+    expect(adjusted).toMatchObject({ username: admin.username, loginEnabled: true, isAdmin: true });
+    expect((await repository.ensureAdminPlayerAccount(admin)).chipBalance).toBe(51_000);
+  }, 120_000);
+
+  it('shares administrator identity and rotates both sessions from either profile entry', async () => {
+    const linked = await repository.ensureAdminPlayerAccount(admin);
+    const { player } = await createMembership(linked.id, 'LOBBY', 0);
+    for (const entry of ['USER', 'ADMIN'] as const) {
+      const oldUser = await repository.createUserSession(linked.id);
+      const oldAdmin = await repository.createAdminSession(admin.id);
+      const password = entry === 'USER' ? 'user-entry-password' : bootstrapPassword;
+      const displayName = entry === 'USER' ? '大厅管理员' : '管理页管理员';
+      const changed =
+        entry === 'USER'
+          ? await repository.updateUserProfile(linked.id, { displayName, newPassword: password })
+          : await repository.updateAdminProfile(admin.id, { displayName, newPassword: password });
+      expect(changed).not.toBeNull();
+      const userToken =
+        entry === 'USER'
+          ? (changed as { sessionToken?: string }).sessionToken
+          : (changed as { userSessionToken?: string }).userSessionToken;
+      const adminToken =
+        entry === 'ADMIN'
+          ? (changed as { sessionToken?: string }).sessionToken
+          : (changed as { adminSessionToken?: string }).adminSessionToken;
+      expect(await repository.getUserBySession(oldUser)).toBeNull();
+      expect(await repository.getAdminBySession(oldAdmin)).toBeNull();
+      expect(await repository.getUserBySession(userToken)).toMatchObject({
+        username: admin.username,
+        displayName,
+        isAdmin: true,
+      });
+      expect(await repository.getAdminBySession(adminToken)).toMatchObject({
+        username: admin.username,
+        displayName,
+      });
+      expect(await repository.verifyAdmin(admin.username, password)).toMatchObject({
+        id: admin.id,
+        displayName,
+      });
+      const [stored] = await database.db
+        .select()
+        .from(userAccounts)
+        .where(eq(userAccounts.id, linked.id));
+      expect(stored).toMatchObject({ displayName, loginEnabled: false, passwordHash: null });
+      const [membership] = await database.db
+        .select()
+        .from(players)
+        .where(eq(players.id, player.id));
+      expect(membership!.nickname).toBe(displayName);
+    }
+    await Promise.all([
+      repository.updateUserProfile(linked.id, { displayName: '并发大厅资料' }),
+      repository.updateAdminProfile(admin.id, { displayName: '并发管理资料' }),
+    ]);
+    const [authority] = await database.db.select().from(admins).where(eq(admins.id, admin.id));
+    const [shadow] = await database.db
+      .select()
+      .from(userAccounts)
+      .where(eq(userAccounts.id, linked.id));
+    expect(shadow!.displayName).toBe(authority!.displayName);
+    // Restore bootstrap repair semantics for the separate test below.
+    await database.db
+      .update(admins)
+      .set({ passwordChangedAt: null })
+      .where(eq(admins.id, admin.id));
+  }, 120_000);
+
   it('changes a user password without the old password and revokes every previous session', async () => {
     const account = await createAccount();
     const oldSessions = await Promise.all([

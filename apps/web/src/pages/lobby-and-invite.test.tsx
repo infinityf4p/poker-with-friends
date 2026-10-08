@@ -192,9 +192,18 @@ describe('lobby room selection', () => {
 });
 
 describe('administrator sign-in recovery', () => {
-  it('tries the admin endpoint only after an unauthorized player login and redirects to admin', async () => {
+  it('tries the admin endpoint after unauthorized player login and enters the lobby', async () => {
     request.mockImplementation((path: string) => {
-      if (path === '/api/auth/session') return Promise.reject(new Error('no player session'));
+      if (path === '/api/auth/session')
+        return request.mock.calls.filter(([value]) => value === path).length === 1
+          ? Promise.reject(new Error('no player session'))
+          : Promise.resolve({
+              id: 'admin-player',
+              username: 'admin',
+              displayName: '管理员',
+              isAdmin: true,
+            });
+      if (path === '/api/rooms') return Promise.resolve([]);
       if (path === '/api/auth/login')
         return Promise.reject({ status: 401, message: '账号或密码错误' });
       if (path === '/api/admin/login')
@@ -225,8 +234,11 @@ describe('administrator sign-in recovery', () => {
       '/api/auth/session',
       '/api/auth/login',
       '/api/admin/login',
+      '/api/auth/session',
+      '/api/rooms',
     ]);
-    expect(navigate).toHaveBeenCalledWith('/admin');
+    expect(navigate).not.toHaveBeenCalled();
+    expect(container.textContent).toContain('设置');
     expect(container.textContent).not.toContain('secret-password');
   });
 

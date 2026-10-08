@@ -203,6 +203,7 @@ function userSession(row: {
   displayName: string;
   mustChangePassword: boolean;
   chipBalance: number;
+  linkedAdminId?: string | null;
 }): UserSession {
   return {
     id: row.id,
@@ -210,6 +211,7 @@ function userSession(row: {
     displayName: row.displayName,
     mustChangePassword: row.mustChangePassword,
     chipBalance: row.chipBalance,
+    ...(row.linkedAdminId ? { isAdmin: true } : {}),
   };
 }
 
@@ -220,7 +222,11 @@ export class PokerRepository {
   ) {}
 
   public async ensureConfiguredAdmin(): Promise<void> {
-    if (!this.config.ADMIN_PASSWORD_HASH) return;
+    if (!this.config.ADMIN_PASSWORD_HASH) {
+      for (const admin of await this.db.select().from(admins))
+        await this.ensureAdminPlayerAccount(admin);
+      return;
+    }
     await this.db.transaction(async (tx) => {
       let [existing] = await tx
         .select({
@@ -257,6 +263,8 @@ export class PokerRepository {
           .where(eq(admins.id, existing.id));
       }
     });
+    for (const admin of await this.db.select().from(admins))
+      await this.ensureAdminPlayerAccount(admin);
   }
 
   public async verifyAdmin(username: string, password: string): Promise<AuthenticatedAdmin | null> {
@@ -459,13 +467,15 @@ export class PokerRepository {
     const [row] = await this.db
       .select({
         id: userAccounts.id,
-        username: userAccounts.username,
+        username: sql<string>`coalesce(${admins.username}, ${userAccounts.username})`,
         displayName: userAccounts.displayName,
+        linkedAdminId: userAccounts.linkedAdminId,
         mustChangePassword: userAccounts.mustChangePassword,
         chipBalance: userAccounts.chipBalance,
       })
       .from(userSessions)
       .innerJoin(userAccounts, eq(userSessions.userId, userAccounts.id))
+      .leftJoin(admins, eq(userAccounts.linkedAdminId, admins.id))
       .where(
         and(
           eq(userSessions.tokenHash, tokenHash),
@@ -493,12 +503,16 @@ export class PokerRepository {
   public async changeUserPassword(
     userId: string,
     newPassword: string,
-  ): Promise<{ user: AuthenticatedUser; sessionToken: string } | null> {
+  ): Promise<{ user: AuthenticatedUser; sessionToken: string; adminSessionToken?: string } | null> {
     const changed = await this.updateUserProfile(userId, {
       newPassword,
     });
     return changed?.sessionToken
-      ? { user: changed.user, sessionToken: changed.sessionToken }
+      ? {
+          user: changed.user,
+          sessionToken: changed.sessionToken,
+          ...(changed.adminSessionToken ? { adminSessionToken: changed.adminSessionToken } : {}),
+        }
       : null;
   }
 
@@ -508,7 +522,33 @@ export class PokerRepository {
       displayName?: string | undefined;
       newPassword?: string | undefined;
     },
-  ): Promise<{ user: AuthenticatedUser; sessionToken?: string; roomIds: string[] } | null> {
+  ): Promise<{
+    user: AuthenticatedUser;
+    sessionToken?: string;
+    adminSessionToken?: string;
+    roomIds: string[];
+  } | null> {
+    // Linked identity is immutable; acquire administrator locks before player locks.
+    const [identity] = await this.db
+      .select({ linkedAdminId: userAccounts.linkedAdminId })
+      .from(userAccounts)
+      .where(eq(userAccounts.id, userId))
+      .limit(1);
+    if (identity?.linkedAdminId) {
+      const changed = await this.updateAdminProfile(identity.linkedAdminId, input);
+      if (!changed) return null;
+      const [account] = await this.db
+        .select()
+        .from(userAccounts)
+        .where(eq(userAccounts.id, userId));
+      if (!account) return null;
+      return {
+        user: userSession({ ...account, username: changed.admin.username }),
+        roomIds: changed.roomIds,
+        ...(changed.userSessionToken ? { sessionToken: changed.userSessionToken } : {}),
+        ...(changed.sessionToken ? { adminSessionToken: changed.sessionToken } : {}),
+      };
+    }
     const displayName = input.displayName?.trim();
     if (
       displayName !== undefined &&
@@ -579,7 +619,12 @@ export class PokerRepository {
       displayName?: string | undefined;
       newPassword?: string | undefined;
     },
-  ): Promise<{ admin: AuthenticatedAdmin; sessionToken?: string; roomIds: string[] } | null> {
+  ): Promise<{
+    admin: AuthenticatedAdmin;
+    sessionToken?: string;
+    userSessionToken?: string;
+    roomIds: string[];
+  } | null> {
     const displayName = input.displayName?.trim();
     if (
       displayName !== undefined &&
@@ -593,6 +638,7 @@ export class PokerRepository {
       ? await argon2.hash(input.newPassword, USER_PASSWORD_OPTIONS)
       : undefined;
     const sessionToken = input.newPassword ? randomToken() : undefined;
+    const userSessionToken = input.newPassword ? randomToken() : undefined;
     const result = await this.db.transaction(async (tx) => {
       const [updated] = await tx
         .update(admins)
@@ -628,6 +674,18 @@ export class PokerRepository {
           .set({ nickname: displayName, updatedAt: new Date() })
           .where(inArray(players.userId, linkedUserIds));
       }
+      if (userSessionToken && linkedUserIds.length) {
+        await tx.delete(userSessions).where(inArray(userSessions.userId, linkedUserIds));
+        await tx.insert(userSessions).values({
+          userId: linkedUserIds[0]!,
+          tokenHash: hashOpaqueToken(userSessionToken, this.config.TOKEN_PEPPER),
+          expiresAt: expiresAt(),
+        });
+        await tx
+          .update(userAccounts)
+          .set({ passwordHash: null, loginEnabled: false, mustChangePassword: false })
+          .where(inArray(userAccounts.id, linkedUserIds));
+      }
       if (sessionToken) {
         await tx.delete(adminSessions).where(eq(adminSessions.adminId, adminId));
         await tx.insert(adminSessions).values({
@@ -639,6 +697,7 @@ export class PokerRepository {
       return {
         admin: { id: updated.id, username: updated.username, displayName: updated.displayName },
         ...(sessionToken ? { sessionToken } : {}),
+        ...(userSessionToken && linkedUserIds.length ? { userSessionToken } : {}),
         roomIds,
       };
     });
@@ -712,15 +771,16 @@ export class PokerRepository {
 
   public async listUserAccounts(): Promise<AdminUserSummary[]> {
     const rows = await this.db
-      .select()
+      .select({ account: userAccounts, admin: admins })
       .from(userAccounts)
-      .where(and(isNull(userAccounts.linkedAdminId), isNull(userAccounts.deletedAt)))
+      .leftJoin(admins, eq(userAccounts.linkedAdminId, admins.id))
+      .where(isNull(userAccounts.deletedAt))
       .orderBy(asc(userAccounts.createdAt));
-    return rows.map((row) => ({
-      ...userSession(row),
-      loginEnabled: row.loginEnabled,
-      linkedAdminId: row.linkedAdminId,
-      createdAt: row.createdAt.toISOString(),
+    return rows.map(({ account, admin }) => ({
+      ...userSession({ ...account, username: admin?.username ?? account.username }),
+      loginEnabled: !!admin || account.loginEnabled,
+      linkedAdminId: account.linkedAdminId,
+      createdAt: account.createdAt.toISOString(),
     }));
   }
 
@@ -819,9 +879,12 @@ export class PokerRepository {
           .innerJoin(rooms, eq(players.roomId, rooms.id))
           .where(and(eq(players.userId, userId), ne(rooms.status, 'ARCHIVED')))
       ).map((row) => row.roomId);
+      const [linkedAdmin] = updated.linkedAdminId
+        ? await tx.select().from(admins).where(eq(admins.id, updated.linkedAdminId))
+        : [];
       return {
-        ...userSession(updated),
-        loginEnabled: updated.loginEnabled,
+        ...userSession({ ...updated, username: linkedAdmin?.username ?? updated.username }),
+        loginEnabled: !!linkedAdmin || updated.loginEnabled,
         linkedAdminId: updated.linkedAdminId,
         createdAt: updated.createdAt.toISOString(),
         roomIds,
@@ -830,33 +893,25 @@ export class PokerRepository {
   }
 
   public async ensureAdminPlayerAccount(admin: AuthenticatedAdmin): Promise<AuthenticatedUser> {
-    const [existing] = await this.db
-      .select()
-      .from(userAccounts)
-      .where(eq(userAccounts.linkedAdminId, admin.id))
-      .limit(1);
-    if (existing) {
-      if (existing.displayName !== admin.displayName) {
-        const [updated] = await this.db
-          .update(userAccounts)
-          .set({ displayName: admin.displayName, updatedAt: new Date() })
-          .where(eq(userAccounts.id, existing.id))
-          .returning();
-        await this.db
-          .update(players)
-          .set({ nickname: admin.displayName, updatedAt: new Date() })
-          .where(eq(players.userId, existing.id));
-        return userSession(updated ?? existing);
-      }
-      return userSession(existing);
-    }
-    try {
-      const [created] = await this.db.transaction(async (tx) => {
-        const rows = await tx
+    return this.db.transaction(async (tx) => {
+      const [authority] = await tx
+        .select()
+        .from(admins)
+        .where(eq(admins.id, admin.id))
+        .for('update')
+        .limit(1);
+      if (!authority) throw new Error('ADMIN_NOT_FOUND');
+      let [account] = await tx
+        .select()
+        .from(userAccounts)
+        .where(eq(userAccounts.linkedAdminId, admin.id))
+        .limit(1);
+      if (!account) {
+        [account] = await tx
           .insert(userAccounts)
           .values({
             username: `admin-${admin.id}`,
-            displayName: admin.displayName,
+            displayName: authority.displayName,
             passwordHash: null,
             mustChangePassword: false,
             loginEnabled: false,
@@ -864,41 +919,32 @@ export class PokerRepository {
             createdByAdminId: admin.id,
           })
           .returning();
-        const account = rows[0];
-        if (account) {
-          await tx.insert(accountLedgerEntries).values({
-            userId: account.id,
-            kind: 'ACCOUNT_INITIAL_GRANT',
-            delta: account.chipBalance,
-            balanceAfter: account.chipBalance,
-            metadata: { source: 'ADMIN_PLAYER' },
-          });
-          await tx.insert(auditLogs).values({
-            adminId: admin.id,
-            action: 'ADMIN_PLAYER_ACCOUNT_CREATED',
-            metadata: { userId: account.id },
-          });
-        }
-        return rows;
-      });
-      if (!created) throw new Error('Failed to create admin player account');
-      return userSession(created);
-    } catch (error) {
-      if (
-        typeof error === 'object' &&
-        error !== null &&
-        'code' in error &&
-        error.code === '23505'
-      ) {
-        const [concurrent] = await this.db
-          .select()
-          .from(userAccounts)
-          .where(eq(userAccounts.linkedAdminId, admin.id))
-          .limit(1);
-        if (concurrent) return userSession(concurrent);
+        if (!account) throw new Error('Failed to create admin player account');
+        await tx.insert(accountLedgerEntries).values({
+          userId: account.id,
+          kind: 'ACCOUNT_INITIAL_GRANT',
+          delta: account.chipBalance,
+          balanceAfter: account.chipBalance,
+          metadata: { source: 'ADMIN_PLAYER' },
+        });
+        await tx.insert(auditLogs).values({
+          adminId: admin.id,
+          action: 'ADMIN_PLAYER_ACCOUNT_CREATED',
+          metadata: { userId: account.id },
+        });
+      } else if (account.displayName !== authority.displayName) {
+        [account] = await tx
+          .update(userAccounts)
+          .set({ displayName: authority.displayName, updatedAt: new Date() })
+          .where(eq(userAccounts.id, account.id))
+          .returning();
+        await tx
+          .update(players)
+          .set({ nickname: authority.displayName, updatedAt: new Date() })
+          .where(eq(players.userId, account!.id));
       }
-      throw error;
-    }
+      return userSession({ ...account!, username: authority.username });
+    });
   }
 
   public async resetUserPassword(
@@ -1765,7 +1811,7 @@ export class PokerRepository {
       .select({
         id: accountLedgerEntries.id,
         userId: accountLedgerEntries.userId,
-        username: userAccounts.username,
+        username: sql<string>`coalesce(${admins.username}, ${userAccounts.username})`,
         displayName: userAccounts.displayName,
         playerId: accountLedgerEntries.playerId,
         nickname: players.nickname,
@@ -1780,6 +1826,7 @@ export class PokerRepository {
       })
       .from(accountLedgerEntries)
       .innerJoin(userAccounts, eq(accountLedgerEntries.userId, userAccounts.id))
+      .leftJoin(admins, eq(userAccounts.linkedAdminId, admins.id))
       .leftJoin(players, eq(accountLedgerEntries.playerId, players.id))
       .leftJoin(rooms, eq(accountLedgerEntries.roomId, rooms.id))
       .where(eq(accountLedgerEntries.userId, userId))

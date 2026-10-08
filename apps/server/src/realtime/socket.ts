@@ -17,13 +17,15 @@ import {
 import type { AppConfig } from '../config.js';
 import type { PokerRepository } from '../repository.js';
 import type { RoomManager } from '../room/manager.js';
-import { PLAYER_COOKIE } from '../security/cookies.js';
+import { ADMIN_COOKIE, PLAYER_COOKIE } from '../security/cookies.js';
 import { safeErrorLogContext } from '../security/logging.js';
 import { isAllowedBrowserOrigin } from '../security/origin.js';
 
 interface SocketData {
   playerId: string;
   roomId: string;
+  sessionKind: 'USER' | 'ADMIN';
+  ownerId: string;
 }
 
 interface SocketDependencies {
@@ -45,6 +47,40 @@ const commandBusy = (): CommandFailure => ({
   code: 'CONFLICT',
   message: '操作过于频繁，请稍候',
 });
+
+async function hasCurrentSocketSession(
+  socket: Socket,
+  repository: PokerRepository,
+): Promise<boolean> {
+  try {
+    const { sessionKind, ownerId } = socket.data as SocketData;
+    const cookies = parseCookie(socket.request.headers.cookie ?? '');
+    // Preserve the identity selected at handshake; never fall back to another cookie.
+    if (sessionKind === 'USER') {
+      const user = await repository.getUserBySession(cookies[PLAYER_COOKIE]);
+      return !!user && user.id === ownerId;
+    }
+    if (sessionKind === 'ADMIN') {
+      const admin = await repository.getAdminBySession(cookies[ADMIN_COOKIE]);
+      return !!admin && admin.id === ownerId;
+    }
+    return false;
+  } catch {
+    // A failed authority check must not retain private subscriptions or expose DB errors.
+    return false;
+  }
+}
+
+export async function revalidateSocketSessions(
+  io: Server,
+  repository: PokerRepository,
+): Promise<void> {
+  await Promise.all(
+    [...io.sockets.sockets.values()].map(async (socket) => {
+      if (!(await hasCurrentSocketSession(socket, repository))) socket.disconnect(true);
+    }),
+  );
+}
 
 export function registerSocketServer(app: FastifyInstance, deps: SocketDependencies): Server {
   const io = new Server(app.server, {
@@ -88,22 +124,48 @@ export function registerSocketServer(app: FastifyInstance, deps: SocketDependenc
       if (!identifierSchema.safeParse(requestedRoomId).success) {
         return next(new Error('ROOM_REQUIRED'));
       }
-      const player = await deps.repository.getPlayerBySession(
-        cookies[PLAYER_COOKIE],
-        requestedRoomId,
-      );
-      if (!player) return next(new Error('UNAUTHORIZED'));
+      let user = await deps.repository.getUserBySession(cookies[PLAYER_COOKIE]);
+      let sessionKind: SocketData['sessionKind'] = 'USER';
+      let ownerId = user?.id;
+      if (!user && cookies[ADMIN_COOKIE]) {
+        const admin = await deps.repository.getAdminBySession(cookies[ADMIN_COOKIE]);
+        if (admin) {
+          user = await deps.repository.ensureAdminPlayerAccount(admin);
+          sessionKind = 'ADMIN';
+          ownerId = admin.id;
+        }
+      }
+      const player = user ? await deps.repository.getPlayerForUser(user.id, requestedRoomId) : null;
+      if (!player || !ownerId) return next(new Error('UNAUTHORIZED'));
       (socket.data as SocketData).playerId = player.id;
       (socket.data as SocketData).roomId = player.roomId;
+      (socket.data as SocketData).sessionKind = sessionKind;
+      (socket.data as SocketData).ownerId = ownerId;
       return next();
     } catch (error) {
-      return next(error instanceof Error ? error : new Error('UNAUTHORIZED'));
+      app.log.error({ failure: safeErrorLogContext(error) }, 'socket authentication failed');
+      return next(new Error('UNAUTHORIZED'));
     }
   });
 
   io.on('connection', async (socket: Socket) => {
+    socket.use((_packet, next) => {
+      void hasCurrentSocketSession(socket, deps.repository).then((valid) => {
+        if (!valid || !socket.connected) {
+          next(new Error('UNAUTHORIZED'));
+          socket.disconnect(true);
+          return;
+        }
+        next();
+      });
+    });
+    if (!(await hasCurrentSocketSession(socket, deps.repository)) || !socket.connected) {
+      socket.disconnect(true);
+      return;
+    }
     const { playerId, roomId } = socket.data as SocketData;
     await socket.join([`room:${roomId}`, `player:${playerId}`]);
+    if (!socket.connected) return;
     try {
       await deps.rooms.setConnected(roomId, playerId, true);
       socket.emit('room.snapshot', await deps.rooms.snapshot(roomId, playerId));

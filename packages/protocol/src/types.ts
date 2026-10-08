@@ -181,6 +181,7 @@ export interface AdminRoomSummary {
 }
 
 export interface UserSession {
+  isAdmin?: boolean;
   id: string;
   username: string;
   displayName: string;

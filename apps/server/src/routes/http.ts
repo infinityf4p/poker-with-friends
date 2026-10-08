@@ -30,6 +30,7 @@ interface HttpDependencies {
   config: AppConfig;
   repository: PokerRepository;
   rooms: RoomManager;
+  revalidateSessions?: () => Promise<void>;
 }
 
 interface ValidationIssue {
@@ -75,20 +76,29 @@ async function requireUser(
   request: FastifyRequest,
   reply: FastifyReply,
   repository: PokerRepository,
+  cookieOptions: ReturnType<typeof sessionCookieOptions>,
 ): Promise<AuthenticatedUser | null> {
   const user = await repository.getUserBySession(request.cookies[USER_COOKIE]);
-  if (!user) {
-    await reply.code(401).send({ error: 'UNAUTHORIZED', message: '请先登录玩家账号' });
-    return null;
+  if (user) return user;
+  // Recover existing administrator sessions that predate the shared player identity.
+  const admin = request.cookies[ADMIN_COOKIE]
+    ? await repository.getAdminBySession(request.cookies[ADMIN_COOKIE])
+    : null;
+  if (admin) {
+    const player = await repository.ensureAdminPlayerAccount(admin);
+    const token = await repository.createUserSession(player.id);
+    reply.setCookie(USER_COOKIE, token, cookieOptions);
+    return player;
   }
-  return user;
+  await reply.code(401).send({ error: 'UNAUTHORIZED', message: '请先登录账号' });
+  return null;
 }
 
 export async function registerHttpRoutes(
   app: FastifyInstance,
   deps: HttpDependencies,
 ): Promise<void> {
-  const { config, repository, rooms } = deps;
+  const { config, repository, rooms, revalidateSessions } = deps;
   const cookieOptions = sessionCookieOptions(config.NODE_ENV === 'production');
 
   app.addHook('onRequest', async (request, reply) => {
@@ -134,6 +144,12 @@ export async function registerHttpRoutes(
       }
       try {
         const token = await repository.createUserSession(user.id);
+        await Promise.all([
+          repository.deleteUserSession(request.cookies[USER_COOKIE]),
+          repository.deleteAdminSession(request.cookies[ADMIN_COOKIE]),
+        ]);
+        await revalidateSessions?.();
+        reply.clearCookie(ADMIN_COOKIE, { path: '/' });
         reply.setCookie(USER_COOKIE, token, cookieOptions);
         return user;
       } catch (error) {
@@ -157,6 +173,12 @@ export async function registerHttpRoutes(
           parsed.data.username,
           parsed.data.password,
         );
+        await Promise.all([
+          repository.deleteUserSession(request.cookies[USER_COOKIE]),
+          repository.deleteAdminSession(request.cookies[ADMIN_COOKIE]),
+        ]);
+        await revalidateSessions?.();
+        reply.clearCookie(ADMIN_COOKIE, { path: '/' });
         reply.setCookie(USER_COOKIE, registered.sessionToken, cookieOptions);
         return reply.code(201).send(registered.user);
       } catch (error) {
@@ -174,24 +196,29 @@ export async function registerHttpRoutes(
   );
 
   app.post('/api/auth/registration-invites', async (request, reply) => {
-    const user = await requireUser(request, reply, repository);
+    const user = await requireUser(request, reply, repository, cookieOptions);
     if (!user) return;
     return repository.createRegistrationInvite({ userId: user.id });
   });
 
   app.post('/api/auth/logout', async (request, reply) => {
-    await repository.deleteUserSession(request.cookies[USER_COOKIE]);
+    await Promise.all([
+      repository.deleteUserSession(request.cookies[USER_COOKIE]),
+      repository.deleteAdminSession(request.cookies[ADMIN_COOKIE]),
+    ]);
+    await revalidateSessions?.();
     reply.clearCookie(USER_COOKIE, { path: '/' });
+    reply.clearCookie(ADMIN_COOKIE, { path: '/' });
     return reply.code(204).send();
   });
 
   app.get('/api/auth/session', async (request, reply) => {
-    const user = await requireUser(request, reply, repository);
+    const user = await requireUser(request, reply, repository, cookieOptions);
     return user ?? undefined;
   });
 
   app.post('/api/auth/password', async (request, reply) => {
-    const user = await requireUser(request, reply, repository);
+    const user = await requireUser(request, reply, repository, cookieOptions);
     if (!user) return;
     const parsed = changeUserPasswordSchema.safeParse(request.body);
     if (!parsed.success) return sendValidationError(reply, parsed.error.issues);
@@ -199,12 +226,15 @@ export async function registerHttpRoutes(
     if (!changed) {
       return reply.code(401).send({ error: 'UNAUTHORIZED', message: '账号已不可用，请重新登录' });
     }
+    await revalidateSessions?.();
     reply.setCookie(USER_COOKIE, changed.sessionToken, cookieOptions);
+    if (changed.adminSessionToken)
+      reply.setCookie(ADMIN_COOKIE, changed.adminSessionToken, cookieOptions);
     return changed.user;
   });
 
   app.patch('/api/auth/profile', async (request, reply) => {
-    const user = await requireUser(request, reply, repository);
+    const user = await requireUser(request, reply, repository, cookieOptions);
     if (!user) return;
     const parsed = updateUserProfileSchema.safeParse(request.body ?? {});
     if (!parsed.success) return sendValidationError(reply, parsed.error.issues);
@@ -213,7 +243,12 @@ export async function registerHttpRoutes(
       if (!updated) {
         return reply.code(401).send({ error: 'UNAUTHORIZED', message: '账号已不可用，请重新登录' });
       }
-      if (updated.sessionToken) reply.setCookie(USER_COOKIE, updated.sessionToken, cookieOptions);
+      if (updated.sessionToken) {
+        await revalidateSessions?.();
+        reply.setCookie(USER_COOKIE, updated.sessionToken, cookieOptions);
+      }
+      if (updated.adminSessionToken)
+        reply.setCookie(ADMIN_COOKIE, updated.adminSessionToken, cookieOptions);
       await Promise.all(updated.roomIds.map((roomId) => rooms.refreshPlayers(roomId)));
       return updated.user;
     } catch (error) {
@@ -225,19 +260,19 @@ export async function registerHttpRoutes(
   });
 
   app.get('/api/me/rooms', async (request, reply) => {
-    const user = await requireUser(request, reply, repository);
+    const user = await requireUser(request, reply, repository, cookieOptions);
     if (!user) return;
     return repository.listUserRooms(user.id);
   });
 
   app.get('/api/rooms', async (request, reply) => {
-    const user = await requireUser(request, reply, repository);
+    const user = await requireUser(request, reply, repository, cookieOptions);
     if (!user) return;
     return repository.listLobbyRooms(user.id);
   });
 
   app.get<{ Params: { id: string } }>('/api/rooms/:id/chat', async (request, reply) => {
-    const user = await requireUser(request, reply, repository);
+    const user = await requireUser(request, reply, repository, cookieOptions);
     if (!user) return;
     const player = await repository.getPlayerForUser(user.id, request.params.id);
     if (!player) return reply.code(403).send({ error: 'FORBIDDEN', message: '你不属于该牌桌' });
@@ -245,7 +280,7 @@ export async function registerHttpRoutes(
   });
 
   app.post('/api/rooms', async (request, reply) => {
-    const user = await requireUser(request, reply, repository);
+    const user = await requireUser(request, reply, repository, cookieOptions);
     if (!user) return;
     const parsed = createRoomSchema.safeParse(request.body);
     if (!parsed.success) return sendValidationError(reply, parsed.error.issues);
@@ -281,15 +316,28 @@ export async function registerHttpRoutes(
       const admin = await repository.verifyAdmin(parsed.data.username, parsed.data.password);
       if (!admin)
         return reply.code(401).send({ error: 'INVALID_CREDENTIALS', message: '账号或密码错误' });
+      const player = await repository.ensureAdminPlayerAccount(admin);
       const token = await repository.createAdminSession(admin.id);
+      const userToken = await repository.createUserSession(player.id);
+      await Promise.all([
+        repository.deleteUserSession(request.cookies[USER_COOKIE]),
+        repository.deleteAdminSession(request.cookies[ADMIN_COOKIE]),
+      ]);
+      await revalidateSessions?.();
       reply.setCookie(ADMIN_COOKIE, token, cookieOptions);
+      reply.setCookie(USER_COOKIE, userToken, cookieOptions);
       return { id: admin.id, username: admin.username, displayName: admin.displayName };
     },
   );
 
   app.post('/api/admin/logout', async (request, reply) => {
-    await repository.deleteAdminSession(request.cookies[ADMIN_COOKIE]);
+    await Promise.all([
+      repository.deleteAdminSession(request.cookies[ADMIN_COOKIE]),
+      repository.deleteUserSession(request.cookies[USER_COOKIE]),
+    ]);
+    await revalidateSessions?.();
     reply.clearCookie(ADMIN_COOKIE, { path: '/' });
+    reply.clearCookie(USER_COOKIE, { path: '/' });
     return reply.code(204).send();
   });
 
@@ -308,7 +356,12 @@ export async function registerHttpRoutes(
       if (!updated) {
         return reply.code(401).send({ error: 'UNAUTHORIZED', message: '账号已不可用，请重新登录' });
       }
-      if (updated.sessionToken) reply.setCookie(ADMIN_COOKIE, updated.sessionToken, cookieOptions);
+      if (updated.sessionToken) {
+        await revalidateSessions?.();
+        reply.setCookie(ADMIN_COOKIE, updated.sessionToken, cookieOptions);
+      }
+      if (updated.userSessionToken)
+        reply.setCookie(USER_COOKIE, updated.userSessionToken, cookieOptions);
       await Promise.all(updated.roomIds.map((roomId) => rooms.refreshPlayers(roomId)));
       return updated.admin;
     } catch (error) {
@@ -358,6 +411,7 @@ export async function registerHttpRoutes(
       if (!(await repository.deleteUserAccount(admin.id, request.params.id))) {
         return reply.code(404).send({ error: 'USER_NOT_FOUND', message: '账号不存在' });
       }
+      await revalidateSessions?.();
       return reply.code(204).send();
     } catch (error) {
       if (error instanceof Error && error.message === 'USER_ACCOUNT_IN_ROOM') {
@@ -381,6 +435,7 @@ export async function registerHttpRoutes(
       if (!reset) {
         return reply.code(404).send({ error: 'NOT_FOUND', message: '账号不存在' });
       }
+      await revalidateSessions?.();
       return { temporaryPassword: reset.password };
     },
   );
@@ -666,7 +721,7 @@ export async function registerHttpRoutes(
   );
 
   app.post<{ Params: { id: string } }>('/api/rooms/:id/archive', async (request, reply) => {
-    const user = await requireUser(request, reply, repository);
+    const user = await requireUser(request, reply, repository, cookieOptions);
     if (!user) return;
     const loaded = await repository.loadRoom(request.params.id);
     if (!loaded) return reply.code(404).send({ error: 'NOT_FOUND', message: '牌局不存在' });
@@ -680,7 +735,7 @@ export async function registerHttpRoutes(
   });
 
   app.get<{ Params: { id: string } }>('/api/rooms/:id/chips', async (request, reply) => {
-    const user = await requireUser(request, reply, repository);
+    const user = await requireUser(request, reply, repository, cookieOptions);
     if (!user) return;
     const player = await repository.getPlayerForUser(user.id, request.params.id);
     if (!player) return reply.code(403).send({ error: 'FORBIDDEN', message: '你不属于该牌桌' });
@@ -690,7 +745,7 @@ export async function registerHttpRoutes(
   app.post<{ Params: { id: string; playerId: string } }>(
     '/api/rooms/:id/players/:playerId/kick',
     async (request, reply) => {
-      const user = await requireUser(request, reply, repository);
+      const user = await requireUser(request, reply, repository, cookieOptions);
       if (!user) return;
       const owner = await repository.getPlayerForUser(user.id, request.params.id);
       if (!owner) return reply.code(403).send({ error: 'FORBIDDEN', message: '你不属于该牌桌' });
@@ -713,7 +768,7 @@ export async function registerHttpRoutes(
   );
 
   app.post<{ Params: { id: string } }>('/api/rooms/:id/enter', async (request, reply) => {
-    const user = await requireUser(request, reply, repository);
+    const user = await requireUser(request, reply, repository, cookieOptions);
     if (!user) return;
     const parsed = joinRoomSchema.safeParse(request.body ?? {});
     if (!parsed.success) return sendValidationError(reply, parsed.error.issues);
@@ -765,7 +820,7 @@ export async function registerHttpRoutes(
   });
 
   app.post<{ Params: { token: string } }>('/api/rooms/:token/join', async (request, reply) => {
-    const user = await requireUser(request, reply, repository);
+    const user = await requireUser(request, reply, repository, cookieOptions);
     if (!user) return;
     const parsed = joinRoomSchema.safeParse(request.body ?? {});
     if (!parsed.success) return sendValidationError(reply, parsed.error.issues);
@@ -812,12 +867,12 @@ export async function registerHttpRoutes(
 
   /** @deprecated Prefer /api/auth/session and /api/me/rooms. */
   app.get('/api/player/session', async (request, reply) => {
-    const user = await requireUser(request, reply, repository);
+    const user = await requireUser(request, reply, repository, cookieOptions);
     return user ?? undefined;
   });
 
   app.get<{ Params: { id: string } }>('/api/rooms/:id', async (request, reply) => {
-    const user = await requireUser(request, reply, repository);
+    const user = await requireUser(request, reply, repository, cookieOptions);
     if (!user) return;
     const player = await repository.getPlayerForUser(user.id, request.params.id);
     if (!player) {

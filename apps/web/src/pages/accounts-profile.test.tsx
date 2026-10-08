@@ -27,6 +27,7 @@ let root: Root;
 beforeEach(() => {
   vi.stubGlobal('IS_REACT_ACT_ENVIRONMENT', true);
   request.mockReset();
+  vi.clearAllMocks();
   container = document.createElement('div');
   document.body.append(container);
   root = createRoot(container);
@@ -148,4 +149,94 @@ describe('admin account deletion', () => {
     expect(button('确认删除账号').disabled).toBe(false);
     expect(container.querySelectorAll('.account-list > article')).toHaveLength(1);
   });
+});
+
+describe('administrator player access', () => {
+  it.each([false, true])(
+    'shows management navigation only for an administrator: %s',
+    async (isAdmin) => {
+      request.mockImplementation(async (path: string) =>
+        path === '/api/auth/session' ? { ...user, isAdmin } : [],
+      );
+      await act(async () => root.render(<LobbyPage />));
+      await act(async () => button('设置').click());
+      const entry = [...document.querySelectorAll('button')].find(
+        (item) => item.textContent?.trim() === '管理后台',
+      );
+      expect(Boolean(entry)).toBe(isAdmin);
+      if (entry) {
+        const { navigate } = await import('../navigation');
+        await act(async () => entry.click());
+        expect(navigate).toHaveBeenCalledWith('/admin');
+      }
+    },
+  );
+
+  it('keeps administrator chips and ledger actions while hiding ordinary password reset and deletion', async () => {
+    request.mockImplementation(async (path: string) => {
+      if (path === '/api/admin/session') return admin;
+      if (path === '/api/admin/users')
+        return [{ ...user, username: 'admin', linkedAdminId: admin.id }];
+      return [];
+    });
+    await act(async () => root.render(<AdminPage />));
+    await act(async () => button('账号 1').click());
+    expect(container.querySelector('.account-identity')?.textContent).toContain('管理员');
+    expect(container.textContent).not.toContain('删除账号');
+    expect(container.textContent).not.toContain('重置密码');
+    await act(async () => button('调整筹码').click());
+    expect(document.querySelector('[role="dialog"]')).not.toBeNull();
+    await act(async () =>
+      setInput(
+        document.querySelector<HTMLInputElement>('[role="dialog"] input[type="number"]')!,
+        '250',
+      ),
+    );
+    await act(async () =>
+      document
+        .querySelector('[role="dialog"] form')!
+        .dispatchEvent(new Event('submit', { bubbles: true, cancelable: true })),
+    );
+    const adjustment = request.mock.calls.find(
+      ([path]) => path === '/api/admin/users/player-id/chips',
+    )!;
+    expect(adjustment[1].method).toBe('PATCH');
+    expect(JSON.parse(adjustment[1].body)).toEqual({ balance: 250, reason: '管理员调整账户筹码' });
+    await act(async () => button('筹码记录').click());
+    expect(request).toHaveBeenCalledWith('/api/admin/users/player-id/chip-ledger');
+  });
+
+  it('returns to the lobby without logging out or requesting credentials', async () => {
+    adminRequests(() => []);
+    await act(async () => root.render(<AdminPage />));
+    const calls = request.mock.calls.length;
+    await act(async () => button('返回大厅').click());
+    const { navigate } = await import('../navigation');
+    expect(navigate).toHaveBeenCalledWith('/');
+    expect(request.mock.calls).toHaveLength(calls);
+  });
+});
+
+it('updates the linked administrator account row immediately after editing its profile', async () => {
+  request.mockImplementation(async (path: string) => {
+    if (path === '/api/admin/session') return admin;
+    if (path === '/api/admin/users') return [{ ...user, linkedAdminId: admin.id }];
+    if (path === '/api/admin/profile') return { ...admin, displayName: 'Updated admin' };
+    return [];
+  });
+  await act(async () => root.render(<AdminPage />));
+  await act(async () => button('账号 1').click());
+  await act(async () => container.querySelector<HTMLButtonElement>('.profile-button')!.click());
+  const dialog = document.querySelector('[role="dialog"]')!;
+  await act(async () =>
+    setInput(dialog.querySelector<HTMLInputElement>('input')!, 'Updated admin'),
+  );
+  await act(async () =>
+    dialog
+      .querySelector('form')!
+      .dispatchEvent(new Event('submit', { bubbles: true, cancelable: true })),
+  );
+  expect(container.querySelector('.account-identity')?.textContent).toContain('Updated admin');
+  expect(container.querySelector('.account-identity')?.textContent).toContain('@admin');
+  expect(request.mock.calls.filter(([path]) => path === '/api/admin/users')).toHaveLength(1);
 });

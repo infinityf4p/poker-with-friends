@@ -7,7 +7,7 @@ import Fastify, { type FastifyInstance } from 'fastify';
 import type { Server as SocketServer } from 'socket.io';
 import type { AppConfig } from './config.js';
 import type { PokerRepository } from './repository.js';
-import { registerSocketServer } from './realtime/socket.js';
+import { registerSocketServer, revalidateSocketSessions } from './realtime/socket.js';
 import { registerHttpRoutes } from './routes/http.js';
 import type { RoomManager } from './room/manager.js';
 import { safeErrorLogContext, safeRequestUrl } from './security/logging.js';
@@ -120,8 +120,11 @@ export async function buildApp(deps: BuildAppDependencies): Promise<PokerApp> {
     return payload;
   });
 
-  await registerHttpRoutes(app, deps);
   const io = registerSocketServer(app, deps);
+  await registerHttpRoutes(app, {
+    ...deps,
+    revalidateSessions: () => revalidateSocketSessions(io, deps.repository),
+  });
 
   const webRoot = resolve(process.cwd(), deps.config.WEB_DIST_DIR);
   if (existsSync(resolve(webRoot, 'index.html'))) {

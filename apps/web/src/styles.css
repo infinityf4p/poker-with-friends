@@ -4198,6 +4198,7 @@ svg {
   font-size: 12px;
 }
 .lobby-create-button {
+  width: auto;
   flex-shrink: 0;
 }
 .welcome-actions {
@@ -4974,4 +4975,11 @@ html[data-theme='dark'] .row-actions .danger-link {
 html[data-theme='dark'] .danger-button:hover:not(:disabled),
 html[data-theme='dark'] .row-actions .danger-link:hover:not(:disabled) {
   background: var(--danger-hover);
+}
+
+.account-admin-badge {
+  margin-left: 8px;
+  color: var(--muted);
+  font-size: 0.75rem;
+  font-weight: 500;
 }
