@@ -124,7 +124,7 @@ suite('administrator plays through ordinary HTTP and Socket.IO permissions', () 
       'POST',
       '/api/rooms',
       {
-        name: `Session revocation ${randomUUID()}`,
+        name: `Session revocation ${randomUUID().slice(0, 8)}`,
         settings,
       },
       201,
